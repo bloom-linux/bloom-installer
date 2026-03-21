@@ -1,0 +1,1185 @@
+#!/usr/bin/env python3
+"""Bloom Installer — full graphical installer for Bloom Linux."""
+
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk, Gdk, GLib, Pango
+import subprocess, threading, os, sys, json, re
+
+# ── Palette ────────────────────────────────────────────────────────────────────
+
+def _bloom_colors():
+    import configparser as _cp, os as _os
+    d = {"accent": "#B01828", "bg": "#0D0618", "fg": "#F0EEF4", "fg_dim": "#88809A"}
+    conf = _os.path.expanduser("~/.config/bloom/colors.conf")
+    if _os.path.exists(conf):
+        cp = _cp.ConfigParser()
+        try:
+            cp.read(conf)
+            def g(k, v): return cp.get("Colors", k).strip() if cp.has_option("Colors", k) else v
+            d["accent"] = g("accent", d["accent"])
+        except Exception:
+            pass
+    def _hex2rgb(h):
+        h = h.lstrip("#")
+        return int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+    r, g, b = _hex2rgb(d["accent"])
+    d["accent_rgb"] = f"{r},{g},{b}"
+    return d
+
+_C         = _bloom_colors()
+ACCENT_RGB = _C["accent_rgb"]
+
+ACCENT = "#B01828"
+BG     = "#0D0618"
+BG_MID = "#130520"
+FG     = "#F0EEF4"
+FG_DIM = "#88809A"
+GREEN  = "#50C878"
+AMBER  = "#E0C060"
+
+# ── Packages installed on the target system ────────────────────────────────────
+INSTALL_PKGS = [
+    "hyprland","uwsm","waybar","swaync","hyprlock","hypridle",
+    "kitty","firefox","thunar","thunar-volman","mousepad",
+    "eog","mpv","file-roller","pavucontrol",
+    "baobab","gparted","gnome-system-monitor",
+    "pipewire","pipewire-alsa","pipewire-pulse","wireplumber",
+    "networkmanager","nm-connection-editor","network-manager-applet",
+    "bluez","bluez-utils","blueman",
+    "rofi-wayland","swaybg","swayosd","cliphist",
+    "ttf-jetbrains-mono-nerd","ttf-font-awesome","noto-fonts",
+    "noto-fonts-emoji","noto-fonts-cjk","papirus-icon-theme",
+    "xcursor-vanilla-dmz-aa",
+    "gtk4-layer-shell","python-gobject",
+    "xdg-user-dirs","xdg-utils",
+    "xdg-desktop-portal-hyprland","xdg-desktop-portal-gtk",
+    "gvfs","gvfs-mtp","polkit-kde-agent",
+    "apparmor","ufw","greetd","tuigreet",
+    "cups","system-config-printer","plymouth",
+    "power-profiles-daemon","brightnessctl",
+    "git","neovim","tmux","yazi","btop","ripgrep","fd","fzf",
+    "zip","unzip","p7zip","wget","rsync","jq",
+    "zsh","zsh-completions","zram-generator","flatpak",
+    "pacman-contrib","bash-completion",
+    "gnome-keyring","libsecret",
+    "orca","at-spi2-core",
+    "qt5ct","qt6ct","kvantum",
+]
+
+GPU_DRIVER_MAP = {
+    "nvidia":  {
+        "gfx_driver": "Nvidia",
+        "pkgs": ["nvidia-dkms","nvidia-utils","nvidia-settings","lib32-nvidia-utils","egl-wayland"],
+    },
+    "amd": {
+        "gfx_driver": "Amd / ATI (open-source)",
+        "pkgs": ["mesa","vulkan-radeon","libva-mesa-driver","lib32-mesa","radeontop"],
+    },
+    "intel": {
+        "gfx_driver": "Intel (open-source)",
+        "pkgs": ["mesa","vulkan-intel","intel-media-driver","lib32-mesa"],
+    },
+    "default": {
+        "gfx_driver": "All open-source (default)",
+        "pkgs": ["mesa"],
+    },
+}
+
+# ── CSS ────────────────────────────────────────────────────────────────────────
+CSS = f"""
+* {{ font-family: "Noto Sans", "JetBrains Mono", sans-serif; }}
+window {{ background-color: {BG}; color: {FG}; }}
+.sidebar {{
+    background-color: {BG_MID};
+    border-right: 1px solid rgba({ACCENT_RGB},0.22);
+    min-width: 200px; padding: 24px 14px;
+}}
+.sidebar-title {{ font-size: 15px; font-weight: 800; color: {FG}; }}
+.sidebar-sub   {{ font-size: 11px; color: {FG_DIM}; }}
+.step-item     {{ padding: 7px 10px; border-radius: 8px; font-size: 12px; color: {FG_DIM}; }}
+.step-item.active {{ background: rgba({ACCENT_RGB},0.22); color: {FG}; font-weight: 700; }}
+.step-item.done   {{ color: {GREEN}; }}
+.page-title {{ font-size: 22px; font-weight: 800; color: {FG}; margin-bottom: 4px; }}
+.page-sub   {{ font-size: 13px; color: {FG_DIM}; margin-bottom: 20px; }}
+.section-lbl {{
+    font-size: 10px; font-weight: 700; color: {FG_DIM};
+    letter-spacing: 1.5px; margin-top: 16px; margin-bottom: 6px;
+}}
+.card {{
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 12px; padding: 12px 16px; margin-bottom: 8px;
+}}
+.card.selected {{ border-color: {ACCENT}; background: rgba({ACCENT_RGB},0.12); }}
+.card-title {{ font-size: 14px; font-weight: 700; color: {FG}; }}
+.card-desc  {{ font-size: 12px; color: {FG_DIM}; margin-top: 2px; }}
+.warn-box {{
+    background: rgba({ACCENT_RGB},0.10); border: 1px solid rgba({ACCENT_RGB},0.35);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 12px;
+}}
+.warn-text {{ font-size: 12px; color: #e08888; }}
+.ok-box {{
+    background: rgba(80,200,120,0.08); border: 1px solid rgba(80,200,120,0.25);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 12px;
+}}
+.ok-text {{ font-size: 12px; color: {GREEN}; }}
+entry {{
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px; color: {FG}; padding: 8px 12px; font-size: 13px;
+}}
+entry:focus {{ border-color: {ACCENT}; }}
+.btn-primary {{
+    background: {ACCENT}; color: white; border: none;
+    border-radius: 10px; padding: 10px 26px; font-size: 13px; font-weight: 700;
+}}
+.btn-primary:hover    {{ background: #8A1020; }}
+.btn-primary:disabled {{ background: rgba({ACCENT_RGB},0.35); color: rgba(255,255,255,0.4); }}
+.btn-secondary {{
+    background: rgba(255,255,255,0.06); color: {FG_DIM};
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 10px; padding: 10px 20px; font-size: 13px; font-weight: 600;
+}}
+.btn-secondary:hover {{ background: rgba(255,255,255,0.10); color: {FG}; }}
+.a11y-btn {{
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 8px; color: {FG}; padding: 6px 12px; font-size: 12px;
+}}
+.a11y-btn:hover  {{ background: rgba(255,255,255,0.10); }}
+.a11y-btn:checked {{ background: rgba({ACCENT_RGB},0.20); border-color: {ACCENT}; }}
+.pw-weak   {{ font-size: 11px; color: #e08888; }}
+.pw-medium {{ font-size: 11px; color: {AMBER}; }}
+.pw-strong {{ font-size: 11px; color: {GREEN}; }}
+.sum-key {{ font-size: 12px; color: {FG_DIM}; min-width: 150px; }}
+.sum-val {{ font-size: 12px; color: {FG};  font-weight: 600; }}
+.terminal {{
+    background: #050310; border: 1px solid rgba({ACCENT_RGB},0.25);
+    border-radius: 10px; padding: 12px;
+    font-family: monospace; font-size: 11px; color: #c0b8d0;
+}}
+progressbar trough  {{ background: rgba(255,255,255,0.08); border-radius: 3px; min-height: 5px; }}
+progressbar progress {{ background: {ACCENT}; border-radius: 3px; }}
+.detected-badge {{
+    font-size: 10px; font-weight: 700; color: {GREEN};
+    background: rgba(80,200,120,0.15); border-radius: 4px; padding: 2px 6px;
+}}
+"""
+
+PAGES = [
+    ("Welcome",  "󰋖"),
+    ("Keyboard", ""),
+    ("Location", ""),
+    ("Disk",     ""),
+    ("User",     ""),
+    ("GPU",      "󰢮"),
+    ("Summary",  ""),
+    ("Install",  ""),
+    ("Done",     ""),
+]
+
+COMMON_LOCALES = [
+    ("en_US","English (US)"),("en_GB","English (UK)"),("de_DE","German"),
+    ("fr_FR","French"),("es_ES","Spanish"),("it_IT","Italian"),
+    ("pt_BR","Portuguese (Brazil)"),("nl_NL","Dutch"),("pl_PL","Polish"),
+    ("ru_RU","Russian"),("ja_JP","Japanese"),("zh_CN","Chinese (Simplified)"),
+    ("ko_KR","Korean"),("ar_SA","Arabic"),("tr_TR","Turkish"),
+    ("sv_SE","Swedish"),("da_DK","Danish"),("fi_FI","Finnish"),
+    ("nb_NO","Norwegian"),("cs_CZ","Czech"),("hu_HU","Hungarian"),
+    ("ro_RO","Romanian"),("uk_UA","Ukrainian"),
+]
+
+COMMON_KB = [
+    ("us","English (US)"),("uk","English (UK)"),("de","German"),
+    ("fr","French"),("es","Spanish"),("it","Italian"),
+    ("pt","Portuguese"),("br","Portuguese (Brazil)"),
+    ("ru","Russian"),("pl","Polish"),("nl","Dutch"),
+    ("be","Belgian"),("ch","Swiss (German)"),("dk","Danish"),
+    ("fi","Finnish"),("no","Norwegian"),("se","Swedish"),
+    ("hu","Hungarian"),("ro","Romanian"),("tr","Turkish"),
+    ("jp","Japanese"),("latam","Latin American"),
+    ("dvorak","Dvorak"),("colemak","Colemak"),
+]
+
+COMMON_TZ = [
+    "UTC","America/New_York","America/Chicago","America/Denver",
+    "America/Los_Angeles","America/Toronto","America/Vancouver",
+    "America/Sao_Paulo","America/Argentina/Buenos_Aires","America/Mexico_City",
+    "Europe/London","Europe/Paris","Europe/Berlin","Europe/Madrid","Europe/Rome",
+    "Europe/Amsterdam","Europe/Stockholm","Europe/Warsaw","Europe/Moscow",
+    "Europe/Istanbul","Europe/Kyiv",
+    "Asia/Tokyo","Asia/Shanghai","Asia/Seoul","Asia/Kolkata","Asia/Dubai",
+    "Asia/Singapore","Asia/Bangkok","Asia/Jakarta","Asia/Tehran",
+    "Africa/Cairo","Africa/Johannesburg","Africa/Lagos",
+    "Australia/Sydney","Australia/Melbourne","Australia/Perth",
+    "Pacific/Auckland","Pacific/Honolulu",
+]
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def sh(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        return ""
+
+def list_disks():
+    try:
+        data = json.loads(sh(["lsblk","-J","-b","-d","-o","NAME,SIZE,MODEL,TYPE,HOTPLUG"]))
+        out = []
+        for d in data.get("blockdevices", []):
+            if d.get("type") != "disk":
+                continue
+            b = int(d.get("size", 0))
+            units = [("TB",1<<40),("GB",1<<30),("MB",1<<20)]
+            size_h = next((f"{b/u:.1f} {n}" for n,u in units if b >= u), f"{b} B")
+            out.append({
+                "path": f"/dev/{d['name']}",
+                "size": size_h, "size_b": b,
+                "model": (d.get("model") or "Unknown Drive").strip(),
+                "removable": str(d.get("hotplug","0")) == "1",
+            })
+        return sorted(out, key=lambda x: -x["size_b"])
+    except Exception:
+        return []
+
+def detect_gpu():
+    out = sh(["lspci"])
+    for line in out.splitlines():
+        up = line.upper()
+        if not any(x in up for x in ["VGA","DISPLAY","3D","GPU"]):
+            continue
+        if "NVIDIA" in up:
+            return "nvidia", line.strip()
+        if "AMD" in up or "RADEON" in up or "ADVANCED MICRO" in up:
+            return "amd", line.strip()
+        if "INTEL" in up:
+            return "intel", line.strip()
+    return None, "No GPU detected"
+
+def pw_strength(pw):
+    if not pw:
+        return "", ""
+    s  = (len(pw) >= 8) + (len(pw) >= 12)
+    s += bool(re.search(r"[A-Z]", pw))
+    s += bool(re.search(r"[0-9]", pw))
+    s += bool(re.search(r"[^a-zA-Z0-9]", pw))
+    if s <= 1: return "weak",   "Weak"
+    if s <= 3: return "medium", "Medium"
+    return "strong", "Strong"
+
+def clear_box(box):
+    child = box.get_first_child()
+    while child:
+        nxt = child.get_next_sibling()
+        box.remove(child)
+        child = nxt
+
+def generate_config(data):
+    gpu    = GPU_DRIVER_MAP.get(data.get("gpu_type","default"), GPU_DRIVER_MAP["default"])
+    pkgs   = list(dict.fromkeys(INSTALL_PKGS + gpu["pkgs"]))
+    cfg = {
+        "archinstall-language": "English",
+        "audio_config":  {"audio": "pipewire"},
+        "bootloader":    "grub-install",
+        "hostname":      data.get("hostname","bloom"),
+        "kernels":       ["linux-zen"],
+        "locale_config": {
+            "kb_layout": data.get("kb_layout","us"),
+            "sys_enc":   "UTF-8",
+            "sys_lang":  data.get("locale","en_US"),
+        },
+        "network_config": {"type": "nm"},
+        "ntp":    True,
+        "packages": pkgs,
+        "profile_config": {
+            "profile":    {"classname": "Hyprland", "details": ["Hyprland"]},
+            "gfx_driver": gpu["gfx_driver"],
+            "greeter":    "greetd",
+        },
+        "services": [
+            "NetworkManager","bluetooth","ufw","apparmor",
+            "greetd","cups","power-profiles-daemon",
+        ],
+        "custom-commands": ["/run/bloom/post-install.sh"],
+        "swap":     True,
+        "timezone": data.get("timezone","UTC"),
+        "disk_config": {
+            "config_type": "default_layout",
+            "device_modifications": [{
+                "device": data.get("disk",""),
+                "wipe":   True,
+                "partitions": [],
+            }],
+        },
+        "!users": [{
+            "username":  data.get("username","user"),
+            "!password": data.get("password",""),
+            "sudo":      True,
+            "groups":    ["wheel","audio","video","input","storage"],
+        }],
+        "!root-password": data.get("root_password") or None,
+    }
+    if data.get("encrypt") and data.get("luks_pass"):
+        cfg["disk_encryption"] = {
+            "encryption_type":      "luks",
+            "!encryption_password": data["luks_pass"],
+        }
+    return cfg
+
+# ── Page base ──────────────────────────────────────────────────────────────────
+
+class Page(Gtk.Box):
+    title    = ""
+    subtitle = ""
+
+    def __init__(self, app):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._app = app
+        self.set_margin_top(36); self.set_margin_bottom(20)
+        self.set_margin_start(40); self.set_margin_end(40)
+        self.set_hexpand(True); self.set_vexpand(True)
+        if self.title:
+            t = Gtk.Label(label=self.title)
+            t.add_css_class("page-title"); t.set_xalign(0)
+            self.append(t)
+        if self.subtitle:
+            s = Gtk.Label(label=self.subtitle)
+            s.add_css_class("page-sub"); s.set_xalign(0); s.set_wrap(True)
+            self.append(s)
+
+    def validate(self):
+        return True, None
+
+    def save(self):
+        pass
+
+    def _section(self, label):
+        l = Gtk.Label(label=label); l.add_css_class("section-lbl"); l.set_xalign(0)
+        return l
+
+    def _warn(self, text):
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box.add_css_class("warn-box")
+        box.append(Gtk.Label(label="⚠", css_classes=["warn-text"]))
+        lbl = Gtk.Label(label=text)
+        lbl.add_css_class("warn-text"); lbl.set_wrap(True); lbl.set_xalign(0)
+        lbl.set_hexpand(True); box.append(lbl)
+        return box
+
+    def _ok(self, text):
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        box.add_css_class("ok-box")
+        box.append(Gtk.Label(label="✓", css_classes=["ok-text"]))
+        lbl = Gtk.Label(label=text)
+        lbl.add_css_class("ok-text"); lbl.set_wrap(True); lbl.set_xalign(0)
+        lbl.set_hexpand(True); box.append(lbl)
+        return box
+
+    def _spacer(self):
+        s = Gtk.Box(); s.set_vexpand(True); return s
+
+# ── Page 0: Welcome ────────────────────────────────────────────────────────────
+
+class WelcomePage(Page):
+    title    = "Welcome to Bloom"
+    subtitle = "Let's set up your system. This will take about 10–15 minutes."
+
+    def __init__(self, app):
+        super().__init__(app)
+
+        # Accessibility row
+        self.append(self._section("ACCESSIBILITY"))
+        a11y = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        a11y.set_margin_bottom(20)
+
+        orca = Gtk.Button(label="󰜩  Screen Reader")
+        orca.add_css_class("a11y-btn")
+        orca.connect("clicked", lambda _: subprocess.Popen(["orca","--replace"],
+                                                            stdout=subprocess.DEVNULL,
+                                                            stderr=subprocess.DEVNULL))
+        a11y.append(orca)
+
+        self._hc = Gtk.ToggleButton(label="  High Contrast")
+        self._hc.add_css_class("a11y-btn")
+        self._hc.connect("toggled", lambda b: subprocess.Popen([
+            "gsettings","set","org.gnome.desktop.a11y.interface",
+            "high-contrast", "true" if b.get_active() else "false"]))
+        a11y.append(self._hc)
+
+        self._big = Gtk.ToggleButton(label="  Large Text")
+        self._big.add_css_class("a11y-btn")
+        self._big.connect("toggled", lambda b: subprocess.Popen([
+            "gsettings","set","org.gnome.desktop.interface",
+            "text-scaling-factor", "1.25" if b.get_active() else "1.0"]))
+        a11y.append(self._big)
+        self.append(a11y)
+
+        # Requirements
+        self.append(self._section("SYSTEM CHECK"))
+        self._req_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        sp = Gtk.Spinner(); sp.set_spinning(True); sp.set_halign(Gtk.Align.CENTER)
+        sp.set_margin_top(8); sp.set_margin_bottom(8)
+        self._req_box.append(sp)
+        self.append(self._req_box)
+        threading.Thread(target=self._check, daemon=True).start()
+
+        self.append(self._spacer())
+        self.append(self._warn(
+            "Installation will erase everything on the selected disk. "
+            "Back up your data before continuing."
+        ))
+
+    def _check(self):
+        reqs = []
+        rc = subprocess.run(["ping","-c1","-W2","8.8.8.8"], capture_output=True).returncode
+        reqs.append(("Internet connection", rc == 0))
+        try:
+            mem = int(open("/proc/meminfo").read().split("MemAvailable:")[1].split()[0]) // 1024
+            reqs.append((f"Available RAM: {mem} MB", mem > 1500))
+        except Exception:
+            reqs.append(("RAM check", False))
+        rc2 = subprocess.run(["sudo","-n","true"], capture_output=True).returncode
+        reqs.append(("Administrator access", rc2 == 0))
+        uefi = os.path.isdir("/sys/firmware/efi")
+        reqs.append((f"Boot mode: {'UEFI' if uefi else 'BIOS (GRUB will handle this)'}", True))
+        GLib.idle_add(self._show_reqs, reqs)
+
+    def _show_reqs(self, reqs):
+        clear_box(self._req_box)
+        for label, ok in reqs:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            icon = Gtk.Label(label="✓" if ok else "⚠")
+            icon.add_css_class("ok-text" if ok else "warn-text")
+            lbl  = Gtk.Label(label=label)
+            lbl.add_css_class("ok-text" if ok else "warn-text")
+            lbl.set_xalign(0); lbl.set_hexpand(True)
+            row.append(icon); row.append(lbl)
+            self._req_box.append(row)
+        return False
+
+# ── Page 1: Keyboard ───────────────────────────────────────────────────────────
+
+class KeyboardPage(Page):
+    title    = "Keyboard Layout"
+    subtitle = "Choose the keyboard layout for the installed system."
+
+    def __init__(self, app):
+        super().__init__(app)
+        self._selected = app.data.get("kb_layout","us")
+
+        search = Gtk.SearchEntry()
+        search.set_placeholder_text("Search layouts…")
+        search.set_margin_bottom(10)
+        search.connect("search-changed", self._filter)
+        self.append(search)
+
+        sw = Gtk.ScrolledWindow(); sw.set_vexpand(True)
+        self._list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        sw.set_child(self._list)
+        self.append(sw)
+        self._build(COMMON_KB)
+
+    def _build(self, items):
+        clear_box(self._list)
+        for code, label in items:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.add_css_class("card")
+            if code == self._selected:
+                row.add_css_class("selected")
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            col.set_hexpand(True)
+            col.append(Gtk.Label(label=label, css_classes=["card-title"], xalign=0))
+            col.append(Gtk.Label(label=code,  css_classes=["card-desc"],  xalign=0))
+            row.append(col)
+            btn = Gtk.Button(label="✓" if code == self._selected else "Select")
+            btn.add_css_class("btn-primary" if code == self._selected else "btn-secondary")
+            btn.connect("clicked", lambda _, c=code: self._select(c))
+            row.append(btn)
+            self._list.append(row)
+
+    def _select(self, code):
+        self._selected = code
+        self._build(COMMON_KB)
+
+    def _filter(self, entry):
+        q = entry.get_text().lower()
+        self._build([(c,l) for c,l in COMMON_KB if q in c.lower() or q in l.lower()])
+
+    def save(self):
+        self._app.data["kb_layout"] = self._selected
+
+# ── Page 2: Location ───────────────────────────────────────────────────────────
+
+class LocationPage(Page):
+    title    = "Location & Language"
+    subtitle = "Set your timezone and system language."
+
+    def __init__(self, app):
+        super().__init__(app)
+
+        self.append(self._section("TIMEZONE"))
+        self._tz = Gtk.DropDown()
+        tz_m = Gtk.StringList()
+        for tz in COMMON_TZ:
+            tz_m.append(tz)
+        self._tz.set_model(tz_m)
+        try:
+            self._tz.set_selected(COMMON_TZ.index(app.data.get("timezone","UTC")))
+        except ValueError:
+            self._tz.set_selected(0)
+        self._tz.set_margin_bottom(16)
+        self.append(self._tz)
+
+        self.append(self._section("LANGUAGE"))
+        self._loc = Gtk.DropDown()
+        loc_m = Gtk.StringList()
+        for code, name in COMMON_LOCALES:
+            loc_m.append(f"{name}  ({code})")
+        self._loc.set_model(loc_m)
+        codes = [c for c,_ in COMMON_LOCALES]
+        try:
+            self._loc.set_selected(codes.index(app.data.get("locale","en_US")))
+        except ValueError:
+            self._loc.set_selected(0)
+        self._loc.set_margin_bottom(8)
+        self.append(self._loc)
+        self.append(self._spacer())
+
+    def save(self):
+        self._app.data["timezone"] = COMMON_TZ[self._tz.get_selected()]
+        self._app.data["locale"]   = [c for c,_ in COMMON_LOCALES][self._loc.get_selected()]
+
+# ── Page 3: Disk ───────────────────────────────────────────────────────────────
+
+class DiskPage(Page):
+    title    = "Disk Setup"
+    subtitle = "Choose where to install Bloom. The selected disk will be completely erased."
+
+    def __init__(self, app):
+        super().__init__(app)
+        self._sel  = app.data.get("disk","")
+        self._cards = {}
+
+        self.append(self._section("SELECT DISK"))
+        self._disk_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        sp = Gtk.Spinner(); sp.set_spinning(True); sp.set_halign(Gtk.Align.CENTER)
+        sp.set_margin_top(8)
+        self._disk_box.append(sp)
+        self.append(self._disk_box)
+        threading.Thread(target=lambda: GLib.idle_add(self._show_disks, list_disks()),
+                         daemon=True).start()
+
+        self.append(self._section("OPTIONS"))
+
+        # Encryption toggle
+        enc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        enc_row.set_margin_bottom(2)
+        enc_lbl = Gtk.Label(label="Encrypt disk (LUKS)")
+        enc_lbl.add_css_class("card-title"); enc_lbl.set_hexpand(True); enc_lbl.set_xalign(0)
+        self._enc = Gtk.Switch()
+        self._enc.set_active(app.data.get("encrypt",False))
+        self._enc.connect("state-set", lambda s, st: self._luks_box.set_visible(st))
+        enc_row.append(enc_lbl); enc_row.append(self._enc)
+        self.append(enc_row)
+        self.append(Gtk.Label(label="Protects your data if the disk is lost or stolen",
+                              css_classes=["card-desc"], xalign=0))
+
+        self._luks_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self._luks_box.set_visible(app.data.get("encrypt",False))
+        self._luks_box.set_margin_top(10)
+        self._luks_box.append(self._section("ENCRYPTION PASSWORD"))
+        self._luks = Gtk.PasswordEntry()
+        self._luks.set_show_peek_icon(True)
+        self._luks.set_text(app.data.get("luks_pass",""))
+        self._luks_box.append(self._luks)
+        self.append(self._luks_box)
+
+        # Filesystem
+        fs_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        fs_row.set_margin_top(14)
+        fs_lbl = Gtk.Label(label="Filesystem")
+        fs_lbl.add_css_class("card-title"); fs_lbl.set_hexpand(True); fs_lbl.set_xalign(0)
+        self._fs = Gtk.DropDown()
+        fs_m = Gtk.StringList()
+        for f in ["btrfs (recommended — snapshots, compression)", "ext4 (classic, widely supported)"]:
+            fs_m.append(f)
+        self._fs.set_model(fs_m)
+        self._fs.set_selected(0 if app.data.get("filesystem","btrfs") == "btrfs" else 1)
+        fs_row.append(fs_lbl); fs_row.append(self._fs)
+        self.append(fs_row)
+
+    def _show_disks(self, disks):
+        clear_box(self._disk_box)
+        if not disks:
+            self._disk_box.append(Gtk.Label(label="No disks found.",
+                                            css_classes=["warn-text"], xalign=0))
+            return False
+        if not self._sel:
+            self._sel = disks[0]["path"]
+            self._app.data["disk"] = self._sel
+        self._cards = {}
+        for d in disks:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.add_css_class("card")
+            if d["path"] == self._sel:
+                row.add_css_class("selected")
+            icon = Gtk.Label()
+            icon.set_markup(f'<span font="20">{"󱈸" if d["removable"] else ""}</span>')
+            row.append(icon)
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            col.set_hexpand(True)
+            col.append(Gtk.Label(label=f"{d['model']}  —  {d['size']}",
+                                 css_classes=["card-title"], xalign=0))
+            col.append(Gtk.Label(label=d["path"],
+                                 css_classes=["card-desc"], xalign=0))
+            row.append(col)
+            btn = Gtk.Button(label="✓" if d["path"] == self._sel else "Select")
+            btn.add_css_class("btn-primary" if d["path"] == self._sel else "btn-secondary")
+            btn.set_valign(Gtk.Align.CENTER)
+            btn.connect("clicked", lambda _, p=d["path"]: self._pick(p))
+            self._cards[d["path"]] = (row, btn)
+            self._disk_box.append(row)
+        return False
+
+    def _pick(self, path):
+        self._sel = path
+        for p,(row,btn) in self._cards.items():
+            if p == path:
+                row.add_css_class("selected")
+                btn.set_label("✓"); btn.set_css_classes(["btn-primary"])
+            else:
+                row.remove_css_class("selected")
+                btn.set_label("Select"); btn.set_css_classes(["btn-secondary"])
+
+    def validate(self):
+        if not self._sel:
+            return False, "Please select a disk."
+        if self._enc.get_active() and not self._luks.get_text():
+            return False, "Please enter an encryption password."
+        return True, None
+
+    def save(self):
+        self._app.data["disk"]       = self._sel
+        self._app.data["encrypt"]    = self._enc.get_active()
+        self._app.data["luks_pass"]  = self._luks.get_text() if self._enc.get_active() else ""
+        self._app.data["filesystem"] = "btrfs" if self._fs.get_selected() == 0 else "ext4"
+
+# ── Page 4: User ───────────────────────────────────────────────────────────────
+
+class UserPage(Page):
+    title    = "User Account"
+    subtitle = "Create your personal account on the installed system."
+
+    def __init__(self, app):
+        super().__init__(app)
+
+        self.append(self._section("USERNAME"))
+        self._user = Gtk.Entry()
+        self._user.set_placeholder_text("e.g. alice")
+        self._user.set_text(app.data.get("username",""))
+        self._user.set_margin_bottom(2)
+        self.append(self._user)
+        self.append(Gtk.Label(label="Lowercase letters, numbers, hyphens only",
+                              css_classes=["card-desc"], xalign=0))
+
+        self.append(self._section("HOSTNAME"))
+        self._host = Gtk.Entry()
+        self._host.set_placeholder_text("e.g. bloom-laptop")
+        self._host.set_text(app.data.get("hostname","bloom"))
+        self._host.set_margin_bottom(8)
+        self.append(self._host)
+
+        self.append(self._section("PASSWORD"))
+        self._pw1 = Gtk.PasswordEntry()
+        self._pw1.set_show_peek_icon(True)
+        self._pw1.set_text(app.data.get("password",""))
+        self._pw1.set_margin_bottom(2)
+        self._pw1.connect("changed", self._on_pw)
+        self.append(self._pw1)
+        self._pw_lbl = Gtk.Label(label="")
+        self._pw_lbl.set_xalign(0); self._pw_lbl.set_margin_bottom(6)
+        self.append(self._pw_lbl)
+        self._pw2 = Gtk.PasswordEntry()
+        self._pw2.set_show_peek_icon(True)
+        self._pw2.set_placeholder_text("Confirm password")
+        self._pw2.set_text(app.data.get("password",""))
+        self._pw2.set_margin_bottom(10)
+        self.append(self._pw2)
+
+        # Root password (optional)
+        root_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        root_row.set_margin_top(4); root_row.set_margin_bottom(2)
+        root_lbl = Gtk.Label(label="Set separate root password")
+        root_lbl.add_css_class("card-title"); root_lbl.set_hexpand(True); root_lbl.set_xalign(0)
+        self._root_sw = Gtk.Switch()
+        self._root_sw.set_active(bool(app.data.get("root_password","")))
+        self._root_sw.connect("state-set", lambda s, st: self._root_box.set_visible(st))
+        root_row.append(root_lbl); root_row.append(self._root_sw)
+        self.append(root_row)
+        self.append(Gtk.Label(label="If disabled, root is locked — use sudo instead (recommended)",
+                              css_classes=["card-desc"], xalign=0))
+        self._root_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._root_box.set_visible(bool(app.data.get("root_password","")))
+        self._root_box.set_margin_top(8)
+        self._root_pw = Gtk.PasswordEntry()
+        self._root_pw.set_show_peek_icon(True)
+        self._root_pw.set_placeholder_text("Root password")
+        self._root_pw.set_text(app.data.get("root_password",""))
+        self._root_box.append(self._root_pw)
+        self.append(self._root_box)
+        self.append(self._spacer())
+
+    def _on_pw(self, entry):
+        level, label = pw_strength(entry.get_text())
+        self._pw_lbl.set_label(f"Strength: {label}" if label else "")
+        self._pw_lbl.set_css_classes([f"pw-{level}"] if level else [])
+
+    def validate(self):
+        u = self._user.get_text().strip()
+        if not u or not re.match(r"^[a-z][a-z0-9\-]*$", u):
+            return False, "Username must start with a lowercase letter and contain only a–z, 0–9, and hyphens."
+        if not self._host.get_text().strip():
+            return False, "Please enter a hostname."
+        pw = self._pw1.get_text()
+        if len(pw) < 6:
+            return False, "Password must be at least 6 characters."
+        if pw != self._pw2.get_text():
+            return False, "Passwords do not match."
+        return True, None
+
+    def save(self):
+        self._app.data["username"]      = self._user.get_text().strip()
+        self._app.data["hostname"]      = self._host.get_text().strip() or "bloom"
+        self._app.data["password"]      = self._pw1.get_text()
+        self._app.data["root_password"] = (
+            self._root_pw.get_text() if self._root_sw.get_active() else "")
+
+# ── Page 5: GPU ────────────────────────────────────────────────────────────────
+
+class GpuPage(Page):
+    title    = "Graphics Driver"
+    subtitle = "Select the GPU driver to install. Your hardware has been detected below."
+
+    GPU_OPTS = [
+        ("nvidia",  "NVIDIA (Proprietary)",
+         "nvidia-dkms · nvidia-utils · lib32-nvidia-utils\nWorks with all kernels including linux-zen"),
+        ("amd",     "AMD / ATI (Open-Source)",
+         "mesa · vulkan-radeon · libva-mesa-driver · lib32-mesa\nRecommended for all AMD / Radeon GPUs"),
+        ("intel",   "Intel (Open-Source)",
+         "mesa · vulkan-intel · intel-media-driver · lib32-mesa\nFor integrated Intel graphics (HD, Iris, Arc)"),
+        ("default", "Generic / Open-Source (mesa only)",
+         "mesa\nSafe fallback for unknown or unsupported hardware"),
+    ]
+
+    def __init__(self, app):
+        super().__init__(app)
+        self._sel      = app.data.get("gpu_type","")
+        self._detected = None
+
+        self._det_lbl = Gtk.Label(label="Detecting GPU…")
+        self._det_lbl.add_css_class("card-desc"); self._det_lbl.set_xalign(0)
+        self._det_lbl.set_margin_bottom(12)
+        self.append(self._det_lbl)
+
+        sw = Gtk.ScrolledWindow(); sw.set_vexpand(True)
+        self._list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        sw.set_child(self._list)
+        self.append(sw)
+        threading.Thread(target=self._detect, daemon=True).start()
+
+    def _detect(self):
+        gpu_type, gpu_desc = detect_gpu()
+        GLib.idle_add(self._on_detected, gpu_type, gpu_desc)
+
+    def _on_detected(self, gpu_type, gpu_desc):
+        self._detected = gpu_type
+        if gpu_type:
+            self._det_lbl.set_markup(
+                f'<span color="{GREEN}">󰢮  Detected: {gpu_desc}</span>')
+            if not self._sel:
+                self._sel = gpu_type
+                self._app.data["gpu_type"] = gpu_type
+        else:
+            self._det_lbl.set_text("No GPU detected — generic driver recommended")
+            if not self._sel:
+                self._sel = "default"
+        self._build()
+        return False
+
+    def _build(self):
+        clear_box(self._list)
+        for key, name, desc in self.GPU_OPTS:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+            row.add_css_class("card")
+            sel = (key == self._sel)
+            if sel:
+                row.add_css_class("selected")
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            col.set_hexpand(True)
+            top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            top.append(Gtk.Label(label=name, css_classes=["card-title"], xalign=0))
+            if key == self._detected:
+                b = Gtk.Label(label="DETECTED"); b.add_css_class("detected-badge")
+                top.append(b)
+            col.append(top)
+            dl = Gtk.Label(label=desc)
+            dl.add_css_class("card-desc"); dl.set_xalign(0); dl.set_wrap(True)
+            col.append(dl)
+            row.append(col)
+            btn = Gtk.Button(label="✓" if sel else "Select")
+            btn.add_css_class("btn-primary" if sel else "btn-secondary")
+            btn.set_valign(Gtk.Align.CENTER)
+            btn.connect("clicked", lambda _, k=key: self._pick(k))
+            row.append(btn)
+            self._list.append(row)
+
+    def _pick(self, key):
+        self._sel = key
+        self._build()
+
+    def save(self):
+        self._app.data["gpu_type"] = self._sel or "default"
+
+# ── Page 6: Summary ────────────────────────────────────────────────────────────
+
+class SummaryPage(Page):
+    title    = "Ready to Install"
+    subtitle = "Review your choices. Installation will begin immediately after you click Install."
+
+    def __init__(self, app):
+        super().__init__(app)
+        self._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        sw = Gtk.ScrolledWindow(); sw.set_vexpand(True)
+        sw.set_child(self._content)
+        self.append(sw)
+
+    def refresh(self):
+        clear_box(self._content)
+        d = self._app.data
+        gpu_names = {
+            "nvidia": "NVIDIA — nvidia-dkms",
+            "amd":    "AMD — mesa + vulkan-radeon",
+            "intel":  "Intel — mesa + vulkan-intel",
+            "default":"Generic — mesa",
+        }
+        rows = [
+            ("Disk",       d.get("disk","—")),
+            ("Filesystem", d.get("filesystem","btrfs")),
+            ("Encryption", "Yes (LUKS)" if d.get("encrypt") else "No"),
+            ("Hostname",   d.get("hostname","bloom")),
+            ("Username",   d.get("username","—")),
+            ("Keyboard",   d.get("kb_layout","us")),
+            ("Timezone",   d.get("timezone","UTC")),
+            ("Language",   d.get("locale","en_US")),
+            ("GPU Driver", gpu_names.get(d.get("gpu_type","default"),"Generic")),
+        ]
+        self._content.append(self._warn(
+            f"This will ERASE all data on {d.get('disk','the selected disk')} and install Bloom. "
+            "This action cannot be undone."
+        ))
+        for key, val in rows:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.set_margin_bottom(8)
+            kl = Gtk.Label(label=key); kl.add_css_class("sum-key"); kl.set_xalign(0)
+            vl = Gtk.Label(label=val); vl.add_css_class("sum-val"); vl.set_xalign(0)
+            vl.set_hexpand(True); vl.set_wrap(True)
+            row.append(kl); row.append(vl)
+            self._content.append(row)
+
+# ── Page 7: Install ────────────────────────────────────────────────────────────
+
+class InstallPage(Page):
+    title    = "Installing Bloom"
+    subtitle = "Please wait — do not power off your computer."
+
+    def __init__(self, app):
+        super().__init__(app)
+        self._pulse_tid = None
+
+        self._status = Gtk.Label(label="Preparing…")
+        self._status.add_css_class("card-desc"); self._status.set_xalign(0)
+        self._status.set_margin_bottom(8)
+        self.append(self._status)
+
+        self._bar = Gtk.ProgressBar()
+        self._bar.set_margin_bottom(16)
+        self.append(self._bar)
+
+        sw = Gtk.ScrolledWindow(); sw.set_vexpand(True)
+        self._log_lbl = Gtk.Label(label="")
+        self._log_lbl.add_css_class("terminal")
+        self._log_lbl.set_xalign(0); self._log_lbl.set_valign(Gtk.Align.START)
+        self._log_lbl.set_wrap(True); self._log_lbl.set_selectable(True)
+        sw.set_child(self._log_lbl)
+        self._adj = sw.get_vadjustment()
+        self.append(sw)
+
+    def start(self, on_done):
+        self._done_cb = on_done
+        threading.Thread(target=self._run, daemon=True).start()
+        self._pulse_tid = GLib.timeout_add(180, self._pulse)
+
+    def _pulse(self):
+        self._bar.pulse()
+        return True
+
+    def _run(self):
+        try:
+            cfg      = generate_config(self._app.data)
+            cfg_path = "/tmp/bloom-install-config.json"
+            with open(cfg_path,"w") as f:
+                json.dump(cfg, f, indent=2)
+            GLib.idle_add(self._status.set_label, "Launching archinstall…")
+            cmd  = ["sudo","archinstall","--config",cfg_path,"--silent"]
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
+            lines = []
+            for line in proc.stdout:
+                lines.append(line.rstrip())
+                if len(lines) > 300:
+                    lines = lines[-300:]
+                txt = "\n".join(lines)
+                GLib.idle_add(self._update_log, txt, line.strip())
+            proc.wait()
+            GLib.idle_add(self._finish, proc.returncode == 0)
+        except Exception as e:
+            GLib.idle_add(self._finish, False)
+            GLib.idle_add(self._update_log, str(e), str(e))
+
+    def _update_log(self, full, last):
+        self._log_lbl.set_text(full)
+        GLib.idle_add(lambda: self._adj.set_value(self._adj.get_upper()))
+        if last:
+            self._status.set_label(last[:90])
+        return False
+
+    def _finish(self, success):
+        if self._pulse_tid:
+            GLib.source_remove(self._pulse_tid)
+            self._pulse_tid = None
+        self._bar.set_fraction(1.0 if success else 0.3)
+        self._done_cb(success)
+
+# ── Page 8: Done ───────────────────────────────────────────────────────────────
+
+class DonePage(Page):
+    def __init__(self, app):
+        super().__init__(app)
+        self._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._content.set_vexpand(True)
+        self.append(self._content)
+
+    def show(self, success=True):
+        clear_box(self._content)
+        if success:
+            icon_char, icon_color = "", GREEN
+            title_text = "Installation Complete!"
+            sub_text   = "Bloom has been installed successfully.\nRemove the installation medium and reboot."
+        else:
+            icon_char, icon_color = "󰅙", "#e08888"
+            title_text = "Installation Failed"
+            sub_text   = "Check the log on the previous page for details.\nYou can try again or continue in the live session."
+
+        icon = Gtk.Label()
+        icon.set_markup(f'<span font="72" color="{icon_color}">{icon_char}</span>')
+        icon.set_halign(Gtk.Align.CENTER); icon.set_margin_top(40); icon.set_margin_bottom(16)
+        self._content.append(icon)
+
+        t = Gtk.Label(label=title_text)
+        t.add_css_class("page-title"); t.set_halign(Gtk.Align.CENTER)
+        self._content.append(t)
+
+        s = Gtk.Label(label=sub_text)
+        s.add_css_class("page-sub"); s.set_halign(Gtk.Align.CENTER)
+        s.set_wrap(True); s.set_margin_top(8); s.set_justify(Gtk.Justification.CENTER)
+        self._content.append(s)
+
+        spacer = Gtk.Box(); spacer.set_vexpand(True)
+        self._content.append(spacer)
+
+        btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        btns.set_halign(Gtk.Align.CENTER); btns.set_margin_bottom(16)
+        if success:
+            rb = Gtk.Button(label="  Reboot Now")
+            rb.add_css_class("btn-primary")
+            rb.connect("clicked", lambda _: subprocess.Popen(["systemctl","reboot"]))
+            btns.append(rb)
+        lb = Gtk.Button(label="Continue in Live Session")
+        lb.add_css_class("btn-secondary")
+        lb.connect("clicked", lambda _: self._app.quit())
+        btns.append(lb)
+        self._content.append(btns)
+
+# ── Main Application ────────────────────────────────────────────────────────────
+
+class InstallerApp(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="bloom-install")
+        self.data = {
+            "locale":"en_US","kb_layout":"us","timezone":"UTC",
+            "disk":"","filesystem":"btrfs","encrypt":False,"luks_pass":"",
+            "hostname":"bloom","username":"","password":"","root_password":"",
+            "gpu_type":"",
+        }
+        self._idx = 0
+
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self._win = Gtk.ApplicationWindow(application=self)
+        self._win.set_title("Install Bloom")
+        self._win.set_default_size(880, 660)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self._win.set_child(root)
+
+        root.append(self._build_sidebar())
+
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        right.set_hexpand(True); right.set_vexpand(True)
+        root.append(right)
+
+        self._stack = Gtk.Stack()
+        self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT)
+        self._stack.set_transition_duration(200)
+        self._stack.set_vexpand(True)
+
+        self._pages = [
+            WelcomePage(self), KeyboardPage(self), LocationPage(self),
+            DiskPage(self), UserPage(self), GpuPage(self),
+            SummaryPage(self), InstallPage(self), DonePage(self),
+        ]
+        for i, page in enumerate(self._pages):
+            self._stack.add_named(page, f"p{i}")
+        right.append(self._stack)
+
+        self._err = Gtk.Label(label="")
+        self._err.add_css_class("warn-text")
+        self._err.set_margin_start(32); self._err.set_margin_end(32)
+        self._err.set_xalign(0); self._err.set_visible(False); self._err.set_wrap(True)
+        right.append(self._err)
+
+        right.append(self._build_nav())
+        self._win.present()
+        self._goto(0)
+
+    def _build_sidebar(self):
+        sb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        sb.add_css_class("sidebar")
+
+        logo_path = "/usr/share/pixmaps/bloom-icon.svg"
+        if os.path.exists(logo_path):
+            logo = Gtk.Image.new_from_file(logo_path)
+            logo.set_pixel_size(40)
+        else:
+            logo = Gtk.Label(label="❀")
+            logo.set_markup('<span font="36" color="#B01828">❀</span>')
+        logo.set_halign(Gtk.Align.START)
+        logo.set_margin_bottom(6)
+        sb.append(logo)
+
+        sb.append(Gtk.Label(label="Install Bloom",
+                            css_classes=["sidebar-title"], xalign=0))
+        sb.append(Gtk.Label(label="Arch · Hyprland · Rolling release",
+                            css_classes=["sidebar-sub"], xalign=0))
+
+        sep = Gtk.Separator()
+        sep.set_margin_top(14); sep.set_margin_bottom(14)
+        sb.append(sep)
+
+        self._steps = []
+        for i, (name, icon) in enumerate(PAGES):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row.add_css_class("step-item")
+            dot = Gtk.Label(label="○"); dot.set_size_request(16,-1)
+            lbl = Gtk.Label(label=f"{icon}  {name}"); lbl.set_xalign(0)
+            row.append(dot); row.append(lbl)
+            sb.append(row)
+            self._steps.append((row, dot))
+
+        sp = Gtk.Box(); sp.set_vexpand(True)
+        sb.append(sp)
+        sb.append(Gtk.Label(label="Bloom Linux v0.1",
+                            css_classes=["sidebar-sub"], xalign=0))
+        return sb
+
+    def _build_nav(self):
+        nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        nav.set_margin_top(6); nav.set_margin_bottom(16)
+        nav.set_margin_start(32); nav.set_margin_end(32)
+
+        self._back = Gtk.Button(label="← Back")
+        self._back.add_css_class("btn-secondary")
+        self._back.connect("clicked", lambda _: self._prev())
+        nav.append(self._back)
+
+        sp = Gtk.Box(); sp.set_hexpand(True)
+        nav.append(sp)
+
+        self._next = Gtk.Button(label="Next →")
+        self._next.add_css_class("btn-primary")
+        self._next.connect("clicked", lambda _: self._advance())
+        nav.append(self._next)
+        return nav
+
+    def _goto(self, idx):
+        self._idx = idx
+        self._stack.set_visible_child_name(f"p{idx}")
+        n = len(self._pages)
+
+        for i, (row, dot) in enumerate(self._steps):
+            row.remove_css_class("active"); row.remove_css_class("done")
+            if i < idx:   row.add_css_class("done");   dot.set_label("✓")
+            elif i == idx: row.add_css_class("active"); dot.set_label("●")
+            else:          dot.set_label("○")
+
+        install_pg = n - 2   # index 7
+        done_pg    = n - 1   # index 8
+        summary_pg = n - 3   # index 6
+
+        self._back.set_sensitive(0 < idx < install_pg)
+        self._back.set_visible(idx < install_pg)
+        self._next.set_visible(idx < install_pg)
+
+        if idx == summary_pg:
+            self._next.set_label("Install →")
+        else:
+            self._next.set_label("Next →")
+
+        self._err.set_visible(False)
+
+        # Refresh summary before showing it
+        if idx == summary_pg:
+            self._pages[idx].refresh()
+
+    def _advance(self):
+        page = self._pages[self._idx]
+        ok, err = page.validate()
+        if not ok:
+            self._err.set_label(f"⚠  {err}")
+            self._err.set_visible(True)
+            return
+        page.save()
+        self._err.set_visible(False)
+        nxt = self._idx + 1
+        self._goto(nxt)
+        # If we just moved to the install page, start installation
+        if nxt == len(self._pages) - 2:
+            self._pages[nxt].start(self._on_done)
+
+    def _prev(self):
+        if self._idx > 0:
+            self._goto(self._idx - 1)
+
+    def _on_done(self, success):
+        done = self._pages[-1]
+        done.show(success)
+        self._goto(len(self._pages) - 1)
+
+
+if __name__ == "__main__":
+    InstallerApp().run(sys.argv)

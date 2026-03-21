@@ -1,0 +1,61 @@
+{
+    "archinstall-language": "English",
+    "audio_config": {
+        "audio": "pipewire"
+    },
+    "bootloader": "grub-install",
+    "hostname": "bloom",
+    "kernels": ["linux-zen"],
+    "locale_config": {
+        "kb_layout": "us",
+        "sys_enc": "UTF-8",
+        "sys_lang": "en_US"
+    },
+    "network_config": {
+        "type": "nm"
+    },
+    "ntp": true,
+    "packages": [
+        "hyprland", "uwsm", "waybar", "swaync", "hyprlock", "hypridle",
+        "kitty", "firefox", "thunar", "thunar-volman", "mousepad",
+        "eog", "mpv", "file-roller", "pavucontrol",
+        "baobab", "gparted", "gnome-system-monitor",
+        "pipewire", "pipewire-alsa", "pipewire-pulse", "wireplumber",
+        "networkmanager", "nm-connection-editor", "network-manager-applet",
+        "bluez", "bluez-utils", "blueman",
+        "rofi-wayland", "swaybg", "swayosd", "cliphist",
+        "ttf-jetbrains-mono-nerd", "ttf-font-awesome", "noto-fonts",
+        "noto-fonts-emoji", "noto-fonts-cjk", "papirus-icon-theme",
+        "xcursor-vanilla-dmz-aa",
+        "gtk4-layer-shell", "python-gobject",
+        "xdg-user-dirs", "xdg-utils",
+        "xdg-desktop-portal-hyprland", "xdg-desktop-portal-gtk",
+        "gvfs", "gvfs-mtp", "polkit-kde-agent",
+        "apparmor", "ufw",
+        "greetd", "tuigreet",
+        "cups", "system-config-printer",
+        "plymouth",
+        "power-profiles-daemon",
+        "git", "neovim", "tmux", "yazi", "btop", "ripgrep", "fd", "fzf",
+        "zip", "unzip", "p7zip", "wget", "rsync", "jq",
+        "zsh", "zsh-completions", "zram-generator",
+        "flatpak",
+        "pacman-contrib", "bash-completion",
+        "gnome-keyring", "libsecret"
+    ],
+    "profile_config": {
+        "profile": {
+            "classname": "Hyprland",
+            "details": ["Hyprland"]
+        },
+        "gfx_driver": "All open-source (default)",
+        "greeter": "greetd"
+    },
+    "additional-repositories": ["multilib"],
+    "services": ["NetworkManager", "bluetooth", "ufw", "apparmor", "greetd", "cups"],
+    "custom-commands": [
+        "/run/bloom/post-install.sh"
+    ],
+    "swap": true,
+    "timezone": "UTC"
+}

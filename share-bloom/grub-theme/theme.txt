@@ -1,0 +1,29 @@
+# Bloom GRUB Theme
+
+desktop-image: "background.png"
+desktop-color: "#0D0618"
+title-text: ""
+
++ boot_menu {
+    left = 8%
+    top = 22%
+    width = 38%
+    height = 58%
+
+    item_color: "#88809A"
+    selected_item_color: "#F0EEF4"
+    item_height: 40
+    item_padding: 18
+    item_spacing: 6
+    scrollbar: false
+}
+
++ label {
+    id = "__timeout__"
+    left = 8%
+    top = 85%
+    width = 38%
+    align = "left"
+    text = "  Booting in %d seconds"
+    color = "#635A74"
+}

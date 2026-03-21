@@ -1,0 +1,587 @@
+#!/usr/bin/env python3
+"""Bloom Welcome App"""
+
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk, Gdk, GLib
+import subprocess
+import os
+
+def _bloom_colors():
+    import configparser as _cp, os as _os
+    d = {"accent": "#B01828", "bg": "#0D0618", "fg": "#F0EEF4", "fg_dim": "#88809A"}
+    conf = _os.path.expanduser("~/.config/bloom/colors.conf")
+    if not _os.path.exists(conf):
+        pass
+    else:
+        cp = _cp.ConfigParser()
+        try:
+            cp.read(conf)
+            def g(k, v): return cp.get("Colors", k).strip() if cp.has_option("Colors", k) else v
+            d["accent"] = g("accent", d["accent"])
+        except Exception:
+            pass
+    def _hex2rgb(h):
+        h = h.lstrip("#")
+        return int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+    r, g, b = _hex2rgb(d["accent"])
+    d["accent_rgb"] = f"{r},{g},{b}"
+    return d
+
+_C         = _bloom_colors()
+ACCENT_RGB = _C["accent_rgb"]
+
+ACCENT  = "#B01828"
+BG_DARK = "#0D0618"
+BG_MID  = "#180828"
+FG_MAIN = "#F0EEF4"
+FG_DIM  = "#88809A"
+
+CSS = f"""
+window {{
+    background-color: {BG_DARK};
+    color: {FG_MAIN};
+}}
+
+/* ── Sidebar ───────────────────────────────────────────────────── */
+.sidebar {{
+    background-color: {BG_MID};
+    border-right: 1px solid rgba({ACCENT_RGB},0.3);
+    padding: 12px 0;
+}}
+.bloom-logo {{
+    font-size: 64px;
+    color: {ACCENT};
+    margin-top: 24px;
+    margin-bottom: 4px;
+}}
+.bloom-name {{
+    font-size: 13px;
+    font-weight: 700;
+    color: {FG_DIM};
+    letter-spacing: 3px;
+    margin-bottom: 20px;
+}}
+
+button.nav-btn {{
+    background: transparent;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 18px;
+    color: {FG_DIM};
+    font-size: 14px;
+    font-weight: 600;
+    margin: 2px 8px;
+    box-shadow: none;
+    outline: none;
+}}
+button.nav-btn:hover {{
+    background: rgba({ACCENT_RGB},0.15);
+    color: {FG_MAIN};
+}}
+button.nav-btn.active {{
+    background: rgba({ACCENT_RGB},0.35);
+    color: {FG_MAIN};
+}}
+button.nav-btn label {{
+    color: inherit;
+}}
+
+/* ── Content area ──────────────────────────────────────────────── */
+.content {{
+    padding: 32px 40px;
+    background-color: {BG_DARK};
+}}
+.title-big {{
+    font-size: 34px;
+    font-weight: 800;
+    color: {FG_MAIN};
+}}
+.title-sub {{
+    font-size: 14px;
+    color: {FG_DIM};
+    margin-top: 4px;
+    margin-bottom: 2px;
+}}
+.body-text {{
+    font-size: 13px;
+    color: {FG_MAIN};
+}}
+
+/* ── Keybind rows ──────────────────────────────────────────────── */
+.keybind-row {{
+    background: rgba(255,255,255,0.04);
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin: 3px 0;
+}}
+.key {{
+    background: rgba({ACCENT_RGB},0.22);
+    border: 1px solid rgba({ACCENT_RGB},0.45);
+    border-radius: 5px;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: {FG_MAIN};
+    font-family: "JetBrainsMono Nerd Font", monospace;
+    min-width: 180px;
+}}
+
+/* ── Package rows ──────────────────────────────────────────────── */
+.pkg-row {{
+    background: rgba(255,255,255,0.03);
+    border-radius: 6px;
+    padding: 6px 12px;
+    margin: 2px 0;
+}}
+.pkg-name {{
+    font-size: 13px;
+    font-weight: 700;
+    color: {FG_MAIN};
+    min-width: 190px;
+}}
+.pkg-desc {{
+    font-size: 12px;
+    color: {FG_DIM};
+}}
+.pkg-category {{
+    font-size: 11px;
+    font-weight: 700;
+    color: {ACCENT};
+    letter-spacing: 1px;
+    margin-top: 14px;
+    margin-bottom: 4px;
+    padding: 0 4px;
+}}
+
+/* ── Action buttons ────────────────────────────────────────────── */
+button.action-btn {{
+    background: {ACCENT};
+    border: none;
+    border-radius: 10px;
+    padding: 10px 22px;
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0 4px;
+    box-shadow: none;
+    outline: none;
+    min-height: 0;
+    min-width: 0;
+}}
+button.action-btn:hover {{
+    background: #9A1422;
+}}
+button.action-btn label {{
+    color: white;
+}}
+
+button.outline-btn {{
+    background: rgba({ACCENT_RGB},0.12);
+    border: 1px solid rgba({ACCENT_RGB},0.4);
+    border-radius: 10px;
+    padding: 10px 22px;
+    font-size: 13px;
+    font-weight: 700;
+    margin: 0 4px;
+    box-shadow: none;
+    outline: none;
+    min-height: 0;
+    min-width: 0;
+}}
+button.outline-btn:hover {{
+    background: rgba({ACCENT_RGB},0.25);
+}}
+button.outline-btn label {{
+    color: {FG_MAIN};
+}}
+"""
+
+KEYBINDS = [
+    # ── Window management
+    ("Super + Enter",        "Open terminal"),
+    ("Super + D",            "App launcher (rofi)"),
+    ("Super + E",            "File manager"),
+    ("Super + Q",            "Close window"),
+    ("Super + F",            "Fullscreen"),
+    ("Super + H/J/K/L",      "Move focus (vim-style)"),
+    ("Super + 1–4",          "Switch workspace"),
+    # ── Desktop tools
+    ("Super + L",            "Lock screen"),
+    ("Super + A",            "Volume mixer"),
+    ("Super + W",            "Network manager"),
+    ("Super + V",            "Clipboard history"),
+    ("Super + N",            "Notification center"),
+    # ── Media
+    ("XF86AudioRaiseVolume", "Volume up (OSD)"),
+    ("XF86AudioLowerVolume", "Volume down (OSD)"),
+    ("XF86AudioMute",        "Mute toggle"),
+    ("XF86MonBrightnessUp",  "Brightness up"),
+    ("XF86MonBrightnessDown","Brightness down"),
+    # ── Screenshots
+    ("Super + Shift + S",    "Screenshot region → clipboard"),
+    ("Print",                "Screenshot fullscreen → clipboard"),
+]
+
+PACKAGES = [
+    # (category, None) marks a section header
+    ("DESKTOP", None),
+    ("hyprland",            "Wayland compositor"),
+    ("waybar",              "Status bar"),
+    ("bloom-island",        "Dynamic Island overlay"),
+    ("swaync",              "Notification center"),
+    ("hyprlock / hypridle", "Screen locker & idle daemon"),
+    ("rofi-wayland",        "App launcher"),
+    ("swaybg",              "Wallpaper"),
+    ("swayosd",             "Volume/brightness OSD"),
+
+    ("APPS", None),
+    ("firefox",             "Web browser"),
+    ("kitty",               "GPU-accelerated terminal"),
+    ("thunar",              "File manager"),
+    ("mousepad",            "Text editor"),
+    ("eog",                 "Image viewer"),
+    ("mpv",                 "Media player"),
+    ("file-roller",         "Archive manager"),
+    ("pavucontrol",         "Audio mixer"),
+    ("blueman",             "Bluetooth manager"),
+    ("nwg-displays",        "Display configuration"),
+    ("qalculate-gtk",       "Calculator"),
+    ("baobab",              "Disk usage analyzer"),
+    ("gparted",             "Partition editor"),
+
+    ("BLOOM TOOLS", None),
+    ("bloom-volume",        "Volume popup (Super+A)"),
+    ("bloom-network",       "Network popup (Super+W)"),
+    ("bloom-calendar",      "Clock/calendar popup"),
+    ("bloom-power",         "Power menu"),
+    ("bloom-install",       "Graphical installer"),
+    ("bloom-welcome",       "This app"),
+
+    ("TERMINAL", None),
+    ("neovim",              "Text editor"),
+    ("yazi",                "File manager"),
+    ("btop",                "System monitor"),
+    ("tmux",                "Terminal multiplexer"),
+    ("ripgrep / fd / fzf",  "Fast search tools"),
+    ("zsh",                 "Shell"),
+
+    ("SYSTEM", None),
+    ("pipewire",            "Audio server"),
+    ("networkmanager",      "Network management"),
+    ("ufw",                 "Firewall"),
+    ("apparmor",            "Mandatory access control"),
+    ("archinstall",         "Arch installer backend"),
+    ("yay",                 "AUR helper"),
+    ("git",                 "Version control"),
+]
+
+
+class WelcomeApp(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="bloom-welcome")
+
+    def do_activate(self):
+        win = Gtk.ApplicationWindow(application=self)
+        win.set_title("Welcome to Bloom")
+        win.set_default_size(880, 600)
+        win.set_resizable(False)
+
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        win.set_child(root)
+
+        # ── Sidebar ───────────────────────────────────────────────
+        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        sidebar.set_size_request(190, -1)
+        sidebar.add_css_class("sidebar")
+        root.append(sidebar)
+
+        logo_path = "/usr/share/pixmaps/bloom-icon.svg"
+        if os.path.exists(logo_path):
+            logo = Gtk.Image.new_from_file(logo_path)
+            logo.set_pixel_size(64)
+            logo.set_margin_top(24)
+            logo.set_margin_bottom(4)
+        else:
+            logo = Gtk.Label(label="❀")
+            logo.add_css_class("bloom-logo")
+        sidebar.append(logo)
+
+        brand = Gtk.Label(label="BLOOM")
+        brand.add_css_class("bloom-name")
+        sidebar.append(brand)
+
+        # ── Content stack ─────────────────────────────────────────
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.SLIDE_UP_DOWN)
+        self.stack.set_transition_duration(200)
+        self.stack.add_css_class("content")
+        self.stack.set_hexpand(True)
+
+        pages = [
+            ("welcome",  "  Welcome",   self._page_welcome()),
+            ("keybinds", "󰌌  Keybinds",  self._page_keybinds()),
+            ("packages", "  Packages",  self._page_packages()),
+            ("install",  "  Install",   self._page_install()),
+        ]
+
+        self.nav_buttons = []
+        for name, label, page in pages:
+            self.stack.add_named(page, name)
+            btn = Gtk.Button(label=label)
+            btn.add_css_class("nav-btn")
+            btn.set_halign(Gtk.Align.FILL)
+            btn.connect("clicked", self._switch_page, name)
+            sidebar.append(btn)
+            self.nav_buttons.append((name, btn))
+
+        self.nav_buttons[0][1].add_css_class("active")
+
+        spacer = Gtk.Box()
+        spacer.set_vexpand(True)
+        sidebar.append(spacer)
+
+        close_btn = Gtk.Button(label="  Close")
+        close_btn.add_css_class("nav-btn")
+        close_btn.connect("clicked", lambda _: win.close())
+        sidebar.append(close_btn)
+
+        root.append(self.stack)
+        win.present()
+
+    def _switch_page(self, btn, name):
+        self.stack.set_visible_child_name(name)
+        for n, b in self.nav_buttons:
+            b.add_css_class("active") if n == name else b.remove_css_class("active")
+
+    def _scrolled(self, child):
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.set_child(child)
+        sw.set_vexpand(True)
+        return sw
+
+    # ── Welcome page ──────────────────────────────────────────────
+
+    def _page_welcome(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        title = Gtk.Label(label="Welcome to Bloom")
+        title.add_css_class("title-big")
+        title.set_halign(Gtk.Align.START)
+        box.append(title)
+
+        sub = Gtk.Label(label="A minimal Arch-based live distro built around Hyprland.")
+        sub.add_css_class("title-sub")
+        sub.set_halign(Gtk.Align.START)
+        box.append(sub)
+
+        sep = Gtk.Separator()
+        sep.set_margin_top(20)
+        sep.set_margin_bottom(20)
+        box.append(sep)
+
+        about = Gtk.Label()
+        about.set_markup(
+            "<span size='13000'>"
+            "Bloom is a lightweight, opinionated Arch Linux live distribution "
+            "designed around the <b>Hyprland</b> Wayland compositor.\n\n"
+            "It ships a curated set of tools for a complete desktop experience — "
+            "no setup required. Everything is styled in a dark plum and wine-red palette.\n\n"
+            "The top-center <b>Dynamic Island</b> shows your active app, expands for "
+            "notifications, and displays media controls when music is playing.\n\n"
+            "<b>Super + Enter</b> — open a terminal\n"
+            "<b>Super + D</b> — app launcher\n"
+            "<b>Super + A</b> — volume mixer\n"
+            "<b>Super + W</b> — network manager\n"
+            "</span>"
+        )
+        about.set_wrap(True)
+        about.add_css_class("body-text")
+        about.set_halign(Gtk.Align.START)
+        about.set_xalign(0)
+        box.append(about)
+
+        sep2 = Gtk.Separator()
+        sep2.set_margin_top(20)
+        sep2.set_margin_bottom(16)
+        box.append(sep2)
+
+        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        btn_row.set_halign(Gtk.Align.START)
+
+        for label, cmd in [
+            (" Terminal",  ["kitty"]),
+            (" Files",     ["thunar"]),
+            (" Browser",   ["firefox"]),
+        ]:
+            btn = Gtk.Button(label=label)
+            btn.add_css_class("action-btn")
+            btn.connect("clicked", lambda _, c=cmd: subprocess.Popen(c))
+            btn_row.append(btn)
+
+        box.append(btn_row)
+        return self._scrolled(box)
+
+    # ── Keybinds page ─────────────────────────────────────────────
+
+    def _page_keybinds(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        title = Gtk.Label(label="Keyboard Shortcuts")
+        title.add_css_class("title-big")
+        title.set_halign(Gtk.Align.START)
+        box.append(title)
+
+        sub = Gtk.Label(label="Super = Windows / Meta key")
+        sub.add_css_class("title-sub")
+        sub.set_halign(Gtk.Align.START)
+        box.append(sub)
+
+        sep = Gtk.Separator()
+        sep.set_margin_top(16)
+        sep.set_margin_bottom(12)
+        box.append(sep)
+
+        for keys, desc in KEYBINDS:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+            row.add_css_class("keybind-row")
+
+            key_lbl = Gtk.Label(label=keys)
+            key_lbl.add_css_class("key")
+            key_lbl.set_xalign(0)
+            row.append(key_lbl)
+
+            desc_lbl = Gtk.Label(label=desc)
+            desc_lbl.add_css_class("body-text")
+            desc_lbl.set_halign(Gtk.Align.START)
+            desc_lbl.set_xalign(0)
+            row.append(desc_lbl)
+
+            box.append(row)
+
+        return self._scrolled(box)
+
+    # ── Packages page ─────────────────────────────────────────────
+
+    def _page_packages(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        title = Gtk.Label(label="Pre-installed Software")
+        title.add_css_class("title-big")
+        title.set_halign(Gtk.Align.START)
+        box.append(title)
+
+        sub = Gtk.Label(label="Everything you need, nothing you don't.")
+        sub.add_css_class("title-sub")
+        sub.set_halign(Gtk.Align.START)
+        box.append(sub)
+
+        sep = Gtk.Separator()
+        sep.set_margin_top(16)
+        sep.set_margin_bottom(8)
+        box.append(sep)
+
+        for name, desc in PACKAGES:
+            if desc is None:
+                # Category header
+                cat = Gtk.Label(label=name)
+                cat.add_css_class("pkg-category")
+                cat.set_halign(Gtk.Align.START)
+                box.append(cat)
+                continue
+
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.add_css_class("pkg-row")
+
+            name_lbl = Gtk.Label(label=name)
+            name_lbl.add_css_class("pkg-name")
+            name_lbl.set_xalign(0)
+            row.append(name_lbl)
+
+            desc_lbl = Gtk.Label(label=desc)
+            desc_lbl.add_css_class("pkg-desc")
+            desc_lbl.set_xalign(0)
+            desc_lbl.set_hexpand(True)
+            row.append(desc_lbl)
+
+            box.append(row)
+
+        return self._scrolled(box)
+
+    # ── Install page ──────────────────────────────────────────────
+
+    def _page_install(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        title = Gtk.Label(label="Install Bloom")
+        title.add_css_class("title-big")
+        title.set_halign(Gtk.Align.START)
+        box.append(title)
+
+        sub = Gtk.Label(label="Make it permanent on your machine.")
+        sub.add_css_class("title-sub")
+        sub.set_halign(Gtk.Align.START)
+        box.append(sub)
+
+        sep = Gtk.Separator()
+        sep.set_margin_top(20)
+        sep.set_margin_bottom(20)
+        box.append(sep)
+
+        info = Gtk.Label()
+        info.set_markup(
+            "<span size='13000'>"
+            "Bloom includes a graphical installer front-end that pre-fills "
+            "sensible defaults, then hands off to <b>archinstall</b> for the "
+            "actual installation.\n\n"
+            "<b>Before you start:</b>\n"
+            "  • Target drive with at least <b>20 GB</b> free\n"
+            "  • Internet connection (check the network icon in the top bar)\n"
+            "  • Back up anything important on the target drive\n\n"
+            "<b>The installer will ask for:</b>\n"
+            "  • Disk and partition layout\n"
+            "  • Root password and user account\n"
+            "  • Timezone and locale\n\n"
+            "Installation takes roughly <b>5–15 minutes</b> depending on "
+            "your internet speed."
+            "</span>"
+        )
+        info.set_wrap(True)
+        info.add_css_class("body-text")
+        info.set_xalign(0)
+        box.append(info)
+
+        sep2 = Gtk.Separator()
+        sep2.set_margin_top(20)
+        sep2.set_margin_bottom(16)
+        box.append(sep2)
+
+        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        btn_row.set_halign(Gtk.Align.START)
+
+        install_btn = Gtk.Button(label="  Launch Installer")
+        install_btn.add_css_class("action-btn")
+        install_btn.connect("clicked",
+                            lambda _: subprocess.Popen(["bloom-install"]))
+        btn_row.append(install_btn)
+
+        terminal_btn = Gtk.Button(label=" Manual Install")
+        terminal_btn.add_css_class("outline-btn")
+        terminal_btn.connect("clicked",
+                             lambda _: subprocess.Popen(
+                                 ["kitty", "-e", "sudo", "archinstall"]))
+        btn_row.append(terminal_btn)
+
+        box.append(btn_row)
+        return self._scrolled(box)
+
+
+if __name__ == "__main__":
+    WelcomeApp().run()

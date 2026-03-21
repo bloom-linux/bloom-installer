@@ -1,0 +1,394 @@
+#!/usr/bin/env python3
+"""Bloom First-Run Wizard — runs once on first login to the installed system."""
+
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk, Gdk, GLib
+import subprocess, os, sys, threading
+
+MARKER = os.path.expanduser("~/.config/bloom/firstrun-done")
+
+# Exit immediately if already completed
+if os.path.exists(MARKER):
+    sys.exit(0)
+
+def _bloom_colors():
+    import configparser as _cp, os as _os
+    d = {"accent": "#B01828", "bg": "#0D0618", "fg": "#F0EEF4", "fg_dim": "#88809A"}
+    conf = _os.path.expanduser("~/.config/bloom/colors.conf")
+    if _os.path.exists(conf):
+        cp = _cp.ConfigParser()
+        try:
+            cp.read(conf)
+            def g(k, v): return cp.get("Colors", k).strip() if cp.has_option("Colors", k) else v
+            d["accent"] = g("accent", d["accent"])
+        except Exception:
+            pass
+    def _hex2rgb(h):
+        h = h.lstrip("#")
+        return int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+    r, g, b = _hex2rgb(d["accent"])
+    d["accent_rgb"] = f"{r},{g},{b}"
+    return d
+
+_C         = _bloom_colors()
+ACCENT_RGB = _C["accent_rgb"]
+
+ACCENT = "#B01828"
+BG     = "#0D0618"
+BG_MID = "#130520"
+FG     = "#F0EEF4"
+FG_DIM = "#88809A"
+GREEN  = "#50C878"
+
+CSS = f"""
+* {{ font-family: "Noto Sans", sans-serif; }}
+window {{ background-color: {BG}; color: {FG}; }}
+.sidebar {{
+    background-color: {BG_MID};
+    border-right: 1px solid rgba({ACCENT_RGB},0.2);
+    min-width: 180px; padding: 28px 16px;
+}}
+.sidebar-title {{ font-size: 14px; font-weight: 800; color: {FG}; }}
+.sidebar-sub   {{ font-size: 11px; color: {FG_DIM}; margin-bottom: 20px; }}
+.step-item     {{ padding: 7px 10px; border-radius: 8px; font-size: 12px; color: {FG_DIM}; }}
+.step-item.active {{ background: rgba({ACCENT_RGB},0.2); color: {FG}; font-weight: 700; }}
+.step-item.done   {{ color: {GREEN}; }}
+.page-title {{ font-size: 24px; font-weight: 800; color: {FG}; margin-bottom: 6px; }}
+.page-sub   {{ font-size: 13px; color: {FG_DIM}; margin-bottom: 24px; }}
+.section-lbl {{
+    font-size: 10px; font-weight: 700; color: {FG_DIM};
+    letter-spacing: 1.5px; margin-top: 14px; margin-bottom: 6px;
+}}
+.card {{
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 12px; padding: 14px 18px; margin-bottom: 10px;
+}}
+.card-title {{ font-size: 14px; font-weight: 700; color: {FG}; }}
+.card-desc  {{ font-size: 12px; color: {FG_DIM}; margin-top: 3px; }}
+.btn-primary {{
+    background: {ACCENT}; color: white; border: none;
+    border-radius: 10px; padding: 10px 28px; font-size: 13px; font-weight: 700;
+}}
+.btn-primary:hover {{ background: #8A1020; }}
+.btn-secondary {{
+    background: rgba(255,255,255,0.06); color: {FG_DIM};
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 10px; padding: 10px 22px; font-size: 13px;
+}}
+.btn-secondary:hover {{ background: rgba(255,255,255,0.10); color: {FG}; }}
+entry {{
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px; color: {FG}; padding: 8px 12px; font-size: 13px;
+}}
+entry:focus {{ border-color: {ACCENT}; }}
+.toggle-row {{
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 10px; padding: 10px 16px; margin-bottom: 8px;
+}}
+"""
+
+STEPS = [("Welcome","󰋖"), ("Preferences",""), ("Done","")]
+
+COMMON_TZ = [
+    "UTC","America/New_York","America/Chicago","America/Denver",
+    "America/Los_Angeles","America/Toronto","America/Sao_Paulo",
+    "Europe/London","Europe/Paris","Europe/Berlin","Europe/Madrid",
+    "Europe/Rome","Europe/Amsterdam","Europe/Stockholm","Europe/Warsaw",
+    "Europe/Moscow","Europe/Istanbul",
+    "Asia/Tokyo","Asia/Shanghai","Asia/Seoul","Asia/Kolkata","Asia/Dubai",
+    "Asia/Singapore","Australia/Sydney","Pacific/Auckland","Pacific/Honolulu",
+]
+
+def sh(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=8).stdout.strip()
+    except Exception:
+        return ""
+
+def current_tz():
+    tz = sh(["timedatectl","show","-p","Timezone","--value"])
+    return tz if tz else "UTC"
+
+def clear_box(box):
+    child = box.get_first_child()
+    while child:
+        nxt = child.get_next_sibling()
+        box.remove(child)
+        child = nxt
+
+# ── Pages ──────────────────────────────────────────────────────────────────────
+
+class WelcomePage(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.set_margin_top(48); self.set_margin_bottom(32)
+        self.set_margin_start(48); self.set_margin_end(48)
+        self.set_hexpand(True); self.set_vexpand(True)
+
+        logo_path = "/usr/share/pixmaps/bloom-icon.svg"
+        if os.path.exists(logo_path):
+            logo = Gtk.Image.new_from_file(logo_path)
+            logo.set_pixel_size(72)
+        else:
+            logo = Gtk.Label()
+            logo.set_markup('<span font="64" color="#B01828">❀</span>')
+        logo.set_halign(Gtk.Align.CENTER); logo.set_margin_bottom(20)
+        self.append(logo)
+
+        t = Gtk.Label(label="Welcome to Bloom")
+        t.add_css_class("page-title"); t.set_halign(Gtk.Align.CENTER)
+        self.append(t)
+
+        s = Gtk.Label(label=(
+            "Your system is ready. Let's take a moment to set a few preferences\n"
+            "so everything feels just right from the start."
+        ))
+        s.add_css_class("page-sub"); s.set_halign(Gtk.Align.CENTER)
+        s.set_wrap(True); s.set_justify(Gtk.Justification.CENTER)
+        self.append(s)
+
+        sp = Gtk.Box(); sp.set_vexpand(True)
+        self.append(sp)
+
+        # Quick feature list
+        features = [
+            ("", "Hyprland — smooth Wayland compositor"),
+            ("", "Waybar + Dynamic Island"),
+            ("", "AppArmor + UFW security enabled"),
+            ("", "Flatpak + Flathub ready"),
+        ]
+        feat_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        feat_box.set_halign(Gtk.Align.CENTER)
+        for icon, text in features:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.set_halign(Gtk.Align.CENTER)
+            row.append(Gtk.Label(label=icon))
+            lbl = Gtk.Label(label=text); lbl.add_css_class("card-desc")
+            row.append(lbl)
+            feat_box.append(row)
+        self.append(feat_box)
+
+        sp2 = Gtk.Box(); sp2.set_vexpand(True)
+        self.append(sp2)
+
+
+class PrefsPage(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.set_margin_top(36); self.set_margin_bottom(20)
+        self.set_margin_start(48); self.set_margin_end(48)
+        self.set_hexpand(True); self.set_vexpand(True)
+
+        t = Gtk.Label(label="Preferences")
+        t.add_css_class("page-title"); t.set_xalign(0)
+        self.append(t)
+        s = Gtk.Label(label="Adjust these any time later in Bloom Settings.")
+        s.add_css_class("page-sub"); s.set_xalign(0); s.set_wrap(True)
+        self.append(s)
+
+        # Timezone
+        lbl = Gtk.Label(label="TIMEZONE"); lbl.add_css_class("section-lbl"); lbl.set_xalign(0)
+        self.append(lbl)
+        self._tz = Gtk.DropDown()
+        tz_m = Gtk.StringList()
+        for tz in COMMON_TZ:
+            tz_m.append(tz)
+        self._tz.set_model(tz_m)
+        detected = current_tz()
+        try:
+            self._tz.set_selected(COMMON_TZ.index(detected))
+        except ValueError:
+            self._tz.set_selected(0)
+        self._tz.set_margin_bottom(14)
+        self.append(self._tz)
+
+        # Optional extras
+        lbl2 = Gtk.Label(label="OPTIONAL EXTRAS"); lbl2.add_css_class("section-lbl"); lbl2.set_xalign(0)
+        self.append(lbl2)
+
+        self._opts = {}
+        options = [
+            ("flatpak",   "Enable Flatpak (Flathub)",
+             "Install additional apps from Flathub — already configured"),
+            ("orca",      "Screen Reader (Orca)",
+             "Enable Orca for accessibility — start with Super+Alt+S"),
+            ("cups",      "Printing Support (CUPS)",
+             "Enable CUPS print server for local and network printers"),
+        ]
+        for key, name, desc in options:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.add_css_class("toggle-row")
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            col.set_hexpand(True)
+            col.append(Gtk.Label(label=name, css_classes=["card-title"], xalign=0))
+            col.append(Gtk.Label(label=desc,  css_classes=["card-desc"],  xalign=0))
+            row.append(col)
+            sw = Gtk.Switch()
+            sw.set_active(True)
+            sw.set_valign(Gtk.Align.CENTER)
+            self._opts[key] = sw
+            row.append(sw)
+            self.append(row)
+
+        self.append(Gtk.Box())  # spacer
+
+    def apply(self):
+        tz = COMMON_TZ[self._tz.get_selected()]
+        subprocess.Popen(["sudo","timedatectl","set-timezone", tz])
+
+        if self._opts["orca"].get_active():
+            subprocess.Popen(["systemctl","--user","enable","--now","orca"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        if self._opts["cups"].get_active():
+            subprocess.Popen(["sudo","systemctl","enable","--now","cups"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+class DonePage(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.set_margin_top(48); self.set_margin_bottom(40)
+        self.set_margin_start(48); self.set_margin_end(48)
+        self.set_hexpand(True); self.set_vexpand(True)
+
+        icon = Gtk.Label()
+        icon.set_markup(f'<span font="72" color="{GREEN}"></span>')
+        icon.set_halign(Gtk.Align.CENTER); icon.set_margin_bottom(16)
+        self.append(icon)
+
+        t = Gtk.Label(label="You're all set!")
+        t.add_css_class("page-title"); t.set_halign(Gtk.Align.CENTER)
+        self.append(t)
+
+        s = Gtk.Label(label=(
+            "Bloom is ready to use.\n\n"
+            "Super+D  — App launcher\n"
+            "Super+Return  — Terminal\n"
+            "Super+E  — File manager\n"
+            "Super+B/W/A  — Brightness / Network / Volume\n"
+            "Super+Shift+S  — Screenshot"
+        ))
+        s.add_css_class("page-sub"); s.set_halign(Gtk.Align.CENTER)
+        s.set_wrap(True); s.set_justify(Gtk.Justification.CENTER)
+        self.append(s)
+
+        sp = Gtk.Box(); sp.set_vexpand(True)
+        self.append(sp)
+
+# ── App ────────────────────────────────────────────────────────────────────────
+
+class FirstRunApp(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="bloom-firstrun")
+        self._idx = 0
+
+    def do_activate(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(), provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self._win = Gtk.ApplicationWindow(application=self)
+        self._win.set_title("Welcome to Bloom")
+        self._win.set_default_size(760, 520)
+        self._win.set_resizable(False)
+
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self._win.set_child(root)
+
+        # Sidebar
+        sb = self._build_sidebar()
+        root.append(sb)
+
+        # Right side
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        right.set_hexpand(True); right.set_vexpand(True)
+        root.append(right)
+
+        self._stack = Gtk.Stack()
+        self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT)
+        self._stack.set_transition_duration(220)
+        self._stack.set_vexpand(True)
+
+        self._prefs = PrefsPage()
+        self._pages = [WelcomePage(), self._prefs, DonePage()]
+        for i, p in enumerate(self._pages):
+            self._stack.add_named(p, f"p{i}")
+        right.append(self._stack)
+
+        # Nav
+        nav = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        nav.set_margin_top(6); nav.set_margin_bottom(16)
+        nav.set_margin_start(32); nav.set_margin_end(32)
+        self._back = Gtk.Button(label="← Back")
+        self._back.add_css_class("btn-secondary")
+        self._back.connect("clicked", lambda _: self._goto(self._idx - 1))
+        nav.append(self._back)
+        sp = Gtk.Box(); sp.set_hexpand(True); nav.append(sp)
+        self._next = Gtk.Button(label="Get Started →")
+        self._next.add_css_class("btn-primary")
+        self._next.connect("clicked", self._advance)
+        nav.append(self._next)
+        right.append(nav)
+
+        self._win.present()
+        self._goto(0)
+
+    def _build_sidebar(self):
+        sb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        sb.add_css_class("sidebar")
+        logo_path = "/usr/share/pixmaps/bloom-icon.svg"
+        if os.path.exists(logo_path):
+            logo = Gtk.Image.new_from_file(logo_path)
+            logo.set_pixel_size(36)
+        else:
+            logo = Gtk.Label()
+            logo.set_markup('<span font="32" color="#B01828">❀</span>')
+        logo.set_halign(Gtk.Align.START); logo.set_margin_bottom(6)
+        sb.append(logo)
+        sb.append(Gtk.Label(label="Bloom Linux", css_classes=["sidebar-title"], xalign=0))
+        sb.append(Gtk.Label(label="First-time setup", css_classes=["sidebar-sub"], xalign=0))
+        self._steps = []
+        for name, icon in STEPS:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row.add_css_class("step-item")
+            dot = Gtk.Label(label="○"); dot.set_size_request(14,-1)
+            lbl = Gtk.Label(label=f"{icon}  {name}"); lbl.set_xalign(0)
+            row.append(dot); row.append(lbl)
+            sb.append(row)
+            self._steps.append((row, dot))
+        sp = Gtk.Box(); sp.set_vexpand(True); sb.append(sp)
+        return sb
+
+    def _goto(self, idx):
+        self._idx = idx
+        self._stack.set_visible_child_name(f"p{idx}")
+        for i, (row, dot) in enumerate(self._steps):
+            row.remove_css_class("active"); row.remove_css_class("done")
+            if i < idx:    row.add_css_class("done");   dot.set_label("✓")
+            elif i == idx: row.add_css_class("active"); dot.set_label("●")
+            else:          dot.set_label("○")
+        self._back.set_sensitive(idx > 0)
+        last = (idx == len(self._pages) - 1)
+        self._next.set_label("Finish" if last else
+                             ("Apply & Continue →" if idx == 1 else "Get Started →"))
+
+    def _advance(self, _=None):
+        if self._idx == 1:
+            self._prefs.apply()
+        if self._idx == len(self._pages) - 1:
+            self._finish()
+            return
+        self._goto(self._idx + 1)
+
+    def _finish(self):
+        os.makedirs(os.path.dirname(MARKER), exist_ok=True)
+        open(MARKER, "w").close()
+        self.quit()
+
+
+if __name__ == "__main__":
+    FirstRunApp().run(sys.argv)

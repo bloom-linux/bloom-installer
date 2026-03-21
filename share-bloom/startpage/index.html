@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bloom</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0D0618;
+    color: #F0EEF4;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    overflow: hidden;
+  }
+
+  /* subtle radial glow behind logo */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    height: 400px;
+    background: radial-gradient(ellipse at center top, rgba(176,24,40,0.12) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .logo-wrap {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 16px;
+    animation: glow 5s ease-in-out infinite;
+  }
+
+  .logo-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    filter: drop-shadow(0 0 20px rgba(176,24,40,0.5));
+  }
+
+  @keyframes glow {
+    0%, 100% { filter: drop-shadow(0 0 12px rgba(176,24,40,0.4)); }
+    50%       { filter: drop-shadow(0 0 32px rgba(176,24,40,0.7)); }
+  }
+
+  .brand {
+    font-size: 11px;
+    letter-spacing: 8px;
+    color: #3D3450;
+    text-transform: uppercase;
+    margin-bottom: 52px;
+  }
+
+  .search-wrapper {
+    position: relative;
+    width: 520px;
+    margin-bottom: 52px;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: 18px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #3D3450;
+    font-size: 17px;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .search {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(176, 24, 40, 0.2);
+    border-radius: 14px;
+    padding: 15px 20px 15px 48px;
+    font-size: 14px;
+    font-family: inherit;
+    color: #F0EEF4;
+    outline: none;
+    transition: border-color 0.25s, background 0.25s, box-shadow 0.25s;
+    caret-color: #B01828;
+  }
+
+  .search::placeholder { color: #3D3450; }
+
+  .search:focus {
+    border-color: rgba(176, 24, 40, 0.55);
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: 0 0 0 4px rgba(176, 24, 40, 0.08),
+                0 8px 32px rgba(0,0,0,0.4);
+  }
+
+  /* Quick links */
+  .links {
+    display: flex;
+    gap: 10px;
+    margin-top: -36px;
+    margin-bottom: 52px;
+  }
+
+  .link {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #635A74;
+    text-decoration: none;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.04);
+    transition: color 0.2s, background 0.2s, border-color 0.2s;
+  }
+
+  .link:hover {
+    color: #F0EEF4;
+    background: rgba(176,24,40,0.12);
+    border-color: rgba(176,24,40,0.3);
+  }
+
+  .clock {
+    font-size: 13px;
+    color: #3D3450;
+    letter-spacing: 2px;
+  }
+
+  .clock .time { color: #635A74; }
+</style>
+</head>
+<body>
+
+<div class="logo-wrap">
+  <img src="bloom-icon.svg" alt="Bloom">
+</div>
+<div class="brand">Bloom</div>
+
+<div class="search-wrapper">
+  <span class="search-icon">⌕</span>
+  <input class="search" id="q" type="text"
+         placeholder="Search or enter an address…"
+         autofocus autocomplete="off" spellcheck="false">
+</div>
+
+<div class="links">
+  <a class="link" href="https://archlinux.org">󰣇 Arch</a>
+  <a class="link" href="https://aur.archlinux.org"> AUR</a>
+  <a class="link" href="https://wiki.archlinux.org">󰖬 Wiki</a>
+  <a class="link" href="https://github.com">󰊤 GitHub</a>
+</div>
+
+<div class="clock" id="clock"></div>
+
+<script>
+  document.getElementById('q').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const v = e.target.value.trim();
+    if (!v) return;
+    const isUrl = /^https?:\/\//.test(v) || /^[\w-]+(\.\w+){1,}(\/|$)/.test(v);
+    location.href = isUrl
+      ? (v.startsWith('http') ? v : 'https://' + v)
+      : 'https://search.brave.com/search?q=' + encodeURIComponent(v);
+  });
+
+  function tick() {
+    const n = new Date();
+    const t = n.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    const d = n.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    document.getElementById('clock').innerHTML =
+      `<span class="time">${t}</span>  ·  ${d}`;
+  }
+  tick(); setInterval(tick, 1000);
+</script>
+</body>
+</html>
