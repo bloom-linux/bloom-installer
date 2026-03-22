@@ -41,7 +41,8 @@
         "zsh", "zsh-completions", "zram-generator",
         "flatpak",
         "pacman-contrib", "bash-completion",
-        "gnome-keyring", "libsecret"
+        "gnome-keyring", "libsecret",
+        "bloom-desktop"
     ],
     "profile_config": {
         "profile": {
@@ -52,6 +53,20 @@
         "greeter": "greetd"
     },
     "additional-repositories": ["multilib"],
+    "custom-repositories": [
+        {
+            "name": "bloom",
+            "url": "https://bloom-linux.github.io/bloom-packages/",
+            "sign_check": "Never",
+            "sign_option": "Never"
+        },
+        {
+            "name": "chaotic-aur",
+            "url": "https://cdn-mirror.chaotic.cx/$repo/$arch",
+            "sign_check": "Never",
+            "sign_option": "Never"
+        }
+    ],
     "services": ["NetworkManager", "bluetooth", "ufw", "apparmor", "greetd", "cups"],
     "custom-commands": [
         "/run/bloom/post-install.sh"

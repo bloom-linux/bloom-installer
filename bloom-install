@@ -40,7 +40,7 @@ AMBER  = "#E0C060"
 
 # ── Packages installed on the target system ────────────────────────────────────
 INSTALL_PKGS = [
-    "hyprland","uwsm","waybar","swaync","hyprlock","hypridle",
+    "hyprland","uwsm","swaync","hyprlock","hypridle",
     "kitty","firefox","thunar","thunar-volman","mousepad",
     "eog","mpv","file-roller","pavucontrol",
     "baobab","gparted","gnome-system-monitor",
@@ -318,7 +318,33 @@ def generate_config(data):
             "groups":    ["wheel","audio","video","input","storage"],
         }],
         "!root-password": data.get("root_password") or None,
+        "additional-repositories": ["multilib"],
+        "custom-repositories": [
+            {
+                "name":        "bloom",
+                "url":         "https://bloom-linux.github.io/bloom-packages/",
+                "sign_check":  "Never",
+                "sign_option": "Never",
+            },
+            {
+                "name":        "chaotic-aur",
+                "url":         "https://cdn-mirror.chaotic.cx/$repo/$arch",
+                "sign_check":  "Never",
+                "sign_option": "Never",
+            },
+        ],
     }
+    if data.get("filesystem", "btrfs") == "btrfs":
+        cfg["disk_config"]["btrfs_config"] = {
+            "subvolumes": [
+                {"name": "@",           "mountpoint": "/",                     "btrfs_flags": [], "mount_options": ["compress=zstd"]},
+                {"name": "@home",       "mountpoint": "/home",                 "btrfs_flags": [], "mount_options": ["compress=zstd"]},
+                {"name": "@log",        "mountpoint": "/var/log",              "btrfs_flags": [], "mount_options": []},
+                {"name": "@pkg",        "mountpoint": "/var/cache/pacman/pkg", "btrfs_flags": [], "mount_options": []},
+                {"name": "@.snapshots", "mountpoint": "/.snapshots",           "btrfs_flags": [], "mount_options": []},
+            ],
+            "default_options": ["compress=zstd"],
+        }
     if data.get("encrypt") and data.get("luks_pass"):
         cfg["disk_encryption"] = {
             "encryption_type":      "luks",
@@ -701,7 +727,7 @@ class UserPage(Page):
         self.append(self._pw_lbl)
         self._pw2 = Gtk.PasswordEntry()
         self._pw2.set_show_peek_icon(True)
-        self._pw2.set_placeholder_text("Confirm password")
+        self._pw2.set_property("placeholder-text", "Confirm password")
         self._pw2.set_text(app.data.get("password",""))
         self._pw2.set_margin_bottom(10)
         self.append(self._pw2)
@@ -723,7 +749,7 @@ class UserPage(Page):
         self._root_box.set_margin_top(8)
         self._root_pw = Gtk.PasswordEntry()
         self._root_pw.set_show_peek_icon(True)
-        self._root_pw.set_placeholder_text("Root password")
+        self._root_pw.set_property("placeholder-text", "Root password")
         self._root_pw.set_text(app.data.get("root_password",""))
         self._root_box.append(self._root_pw)
         self.append(self._root_box)

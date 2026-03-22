@@ -23,6 +23,16 @@ EOF
     echo "  -> greetd configured"
 fi
 
+# ── Bloom repo ───────────────────────────────────────────────────────────────
+if ! grep -q '\[bloom\]' /etc/pacman.conf 2>/dev/null; then
+    cat >> /etc/pacman.conf << 'PEOF'
+
+[bloom]
+SigLevel = Never
+Server = https://bloom-linux.github.io/bloom-packages/
+PEOF
+fi
+
 # ── Chaotic-AUR + AUR packages ───────────────────────────────────────────────
 if ! grep -q '\[chaotic-aur\]' /etc/pacman.conf 2>/dev/null; then
     cat >> /etc/pacman.conf << 'PEOF'
@@ -34,8 +44,8 @@ Server = https://cdn1.chaotic.cx/$repo/$arch
 PEOF
 fi
 pacman -Sy --noconfirm 2>/dev/null || true
-pacman -S --noconfirm --needed candy-icons eww yay pamac-aur 2>/dev/null || true
-echo "  -> AUR packages installed"
+pacman -S --noconfirm --needed candy-icons eww yay pamac-aur bloom-desktop 2>/dev/null || true
+echo "  -> AUR + Bloom packages installed"
 
 # ── Plymouth theme ────────────────────────────────────────────────────────────
 # Copy bloom Plymouth theme from live session
