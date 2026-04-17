@@ -274,6 +274,15 @@ def clear_box(box):
         box.remove(child)
         child = nxt
 
+def _tail_file(path, n=30):
+    """Return the last `n` lines of a file, or "" if unreadable."""
+    try:
+        with open(path, "r", errors="replace") as f:
+            lines = f.readlines()
+        return "".join(lines[-n:])
+    except Exception:
+        return ""
+
 def generate_config(data):
     gpu    = GPU_DRIVER_MAP.get(data.get("gpu_type","default"), GPU_DRIVER_MAP["default"])
     pkgs   = list(dict.fromkeys(INSTALL_PKGS + gpu["pkgs"]))
@@ -767,8 +776,8 @@ class UserPage(Page):
         if not self._host.get_text().strip():
             return False, "Please enter a hostname."
         pw = self._pw1.get_text()
-        if len(pw) < 6:
-            return False, "Password must be at least 6 characters."
+        if not pw:
+            return False, "Please enter a password."
         if pw != self._pw2.get_text():
             return False, "Passwords do not match."
         return True, None
@@ -950,6 +959,8 @@ class InstallPage(Page):
         return True
 
     def _run(self):
+        log_path = "/tmp/bloom-install.log"
+        self._app.data["_install_log"] = log_path
         try:
             cfg      = generate_config(self._app.data)
             cfg_path = "/tmp/bloom-install-config.json"
@@ -957,18 +968,33 @@ class InstallPage(Page):
                 json.dump(cfg, f, indent=2)
             GLib.idle_add(self._status.set_label, "Launching archinstall…")
             cmd  = ["sudo","archinstall","--config",cfg_path,"--silent"]
+
+            # Persist every line to /tmp/bloom-install.log so the failure page
+            # can quote it back and users can `cat` it from a shell.
+            logf = open(log_path, "w", buffering=1)
+            logf.write(f"$ {' '.join(cmd)}\n")
+
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, bufsize=1)
             lines = []
             for line in proc.stdout:
-                lines.append(line.rstrip())
+                stripped = line.rstrip()
+                lines.append(stripped)
+                logf.write(line)
                 if len(lines) > 300:
                     lines = lines[-300:]
                 txt = "\n".join(lines)
-                GLib.idle_add(self._update_log, txt, line.strip())
+                GLib.idle_add(self._update_log, txt, stripped)
             proc.wait()
+            logf.write(f"\n[exit {proc.returncode}]\n")
+            logf.close()
             GLib.idle_add(self._finish, proc.returncode == 0)
         except Exception as e:
+            try:
+                with open(log_path, "a") as f:
+                    f.write(f"\n[installer crash] {e}\n")
+            except Exception:
+                pass
             GLib.idle_add(self._finish, False)
             GLib.idle_add(self._update_log, str(e), str(e))
 
@@ -1004,11 +1030,12 @@ class DonePage(Page):
         else:
             icon_char, icon_color = "󰅙", "#e08888"
             title_text = "Installation Failed"
-            sub_text   = "Check the log on the previous page for details.\nYou can try again or continue in the live session."
+            sub_text   = "The last lines of the installer log are shown below.\n"\
+                         "Full log: /tmp/bloom-install.log"
 
         icon = Gtk.Label()
         icon.set_markup(f'<span font="72" color="{icon_color}">{icon_char}</span>')
-        icon.set_halign(Gtk.Align.CENTER); icon.set_margin_top(40); icon.set_margin_bottom(16)
+        icon.set_halign(Gtk.Align.CENTER); icon.set_margin_top(28); icon.set_margin_bottom(12)
         self._content.append(icon)
 
         t = Gtk.Label(label=title_text)
@@ -1017,19 +1044,50 @@ class DonePage(Page):
 
         s = Gtk.Label(label=sub_text)
         s.add_css_class("page-sub"); s.set_halign(Gtk.Align.CENTER)
-        s.set_wrap(True); s.set_margin_top(8); s.set_justify(Gtk.Justification.CENTER)
+        s.set_wrap(True); s.set_margin_top(6); s.set_justify(Gtk.Justification.CENTER)
         self._content.append(s)
 
-        spacer = Gtk.Box(); spacer.set_vexpand(True)
-        self._content.append(spacer)
+        # On failure, quote the last ~30 lines of the installer log in-place so
+        # the user can actually see the error without hunting.
+        if not success:
+            log_path = self._app.data.get("_install_log", "/tmp/bloom-install.log")
+            tail = _tail_file(log_path, 30)
+            if tail.strip():
+                sw = Gtk.ScrolledWindow()
+                sw.set_vexpand(True); sw.set_margin_start(24); sw.set_margin_end(24)
+                sw.set_margin_top(12)
+                log_lbl = Gtk.Label(label=tail)
+                log_lbl.add_css_class("terminal")
+                log_lbl.set_xalign(0); log_lbl.set_valign(Gtk.Align.START)
+                log_lbl.set_wrap(True); log_lbl.set_selectable(True)
+                sw.set_child(log_lbl)
+                self._content.append(sw)
+        else:
+            spacer = Gtk.Box(); spacer.set_vexpand(True)
+            self._content.append(spacer)
 
         btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        btns.set_halign(Gtk.Align.CENTER); btns.set_margin_bottom(16)
+        btns.set_halign(Gtk.Align.CENTER); btns.set_margin_bottom(16); btns.set_margin_top(12)
         if success:
             rb = Gtk.Button(label="  Reboot Now")
             rb.add_css_class("btn-primary")
             rb.connect("clicked", lambda _: subprocess.Popen(["systemctl","reboot"]))
             btns.append(rb)
+        else:
+            ob = Gtk.Button(label="Open Full Log")
+            ob.add_css_class("btn-secondary")
+            log_path = self._app.data.get("_install_log", "/tmp/bloom-install.log")
+            ob.connect("clicked", lambda _: subprocess.Popen(["xdg-open", log_path]))
+            btns.append(ob)
+            cb = Gtk.Button(label="Copy Log Path")
+            cb.add_css_class("btn-secondary")
+            def copy(_, p=log_path):
+                try:
+                    Gdk.Display.get_default().get_clipboard().set(p)
+                except Exception:
+                    pass
+            cb.connect("clicked", copy)
+            btns.append(cb)
         lb = Gtk.Button(label="Continue in Live Session")
         lb.add_css_class("btn-secondary")
         lb.connect("clicked", lambda _: self._app.quit())
