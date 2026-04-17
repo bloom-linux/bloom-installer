@@ -49,8 +49,7 @@
             "classname": "Hyprland",
             "details": ["Hyprland"]
         },
-        "gfx_driver": "All open-source",
-        "greeter": "greetd"
+        "gfx_driver": "All open-source"
     },
     "additional-repositories": ["multilib"],
     "custom-repositories": [
@@ -69,6 +68,9 @@
     ],
     "services": ["NetworkManager", "bluetooth", "ufw", "apparmor", "greetd", "cups"],
     "custom-commands": [
+        "/run/bloom/post-install.sh"
+    ],
+    "custom_commands": [
         "/run/bloom/post-install.sh"
     ],
     "swap": true,

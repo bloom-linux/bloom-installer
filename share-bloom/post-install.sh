@@ -3,10 +3,19 @@
 # Runs inside arch-chroot via archinstall custom-commands
 # /run is bind-mounted from the live host, so /run/bloom/* is accessible here
 
-set -e
+set -eo pipefail
+
+# Duplicate all output to /var/log/bloom-post-install.log so we can prove
+# the script actually ran and diagnose failures after install. Stdout is
+# still captured by archinstall's own log as a bonus.
+LOGFILE=/var/log/bloom-post-install.log
+mkdir -p "$(dirname "$LOGFILE")"
+exec > >(tee -a "$LOGFILE") 2>&1
+
 BLOOM="/run/bloom"
 
-echo "==> Bloom post-install starting..."
+echo "==> Bloom post-install starting $(date -Iseconds)"
+echo "    BLOOM=$BLOOM  (exists: $( [ -d "$BLOOM" ] && echo yes || echo no ))"
 
 # ── greetd / tuigreet ────────────────────────────────────────────────────────
 if command -v tuigreet &>/dev/null || pacman -Qi greetd &>/dev/null 2>&1; then
@@ -67,37 +76,51 @@ PLEOF
 mkinitcpio -P 2>/dev/null || true
 echo "  -> Plymouth theme set"
 
-# ── GRUB theme + Plymouth cmdline ─────────────────────────────────────────────
+# ── GRUB: branding, defaults, theme, kernel cmdline ──────────────────────────
 GRUB_CONF="/etc/default/grub"
-# Set quiet splash for Plymouth boot animation
-if grep -q "^GRUB_CMDLINE_LINUX_DEFAULT=" "$GRUB_CONF" 2>/dev/null; then
-    # Ensure quiet, splash and Plymouth flags are present
-    sed -i '/^GRUB_CMDLINE_LINUX_DEFAULT=/ {
-        /quiet/! s/"$/ quiet"/
-        /splash/! s/"$/ splash"/
-        /plymouth\.use_simpledrm/! s/"$/ plymouth.use_simpledrm=1"/
-        /loglevel/! s/"$/ loglevel=3"/
-        /vt\.global_cursor_default/! s/"$/ vt.global_cursor_default=0"/
-    }' "$GRUB_CONF"
-else
-    echo 'GRUB_CMDLINE_LINUX_DEFAULT="quiet splash plymouth.use_simpledrm=1 loglevel=3 vt.global_cursor_default=0"' >> "$GRUB_CONF"
-fi
 
+# Copy theme artwork into /boot (so GRUB can read it without needing to
+# mount another filesystem early).
 if [ -d "$BLOOM/grub-theme" ]; then
     mkdir -p /boot/grub/themes/bloom
     cp -r "$BLOOM/grub-theme/." /boot/grub/themes/bloom/
-
-    if grep -q "^GRUB_THEME=" "$GRUB_CONF" 2>/dev/null; then
-        sed -i 's|^GRUB_THEME=.*|GRUB_THEME="/boot/grub/themes/bloom/theme.txt"|' "$GRUB_CONF"
-    elif grep -q "^#GRUB_THEME=" "$GRUB_CONF" 2>/dev/null; then
-        sed -i 's|^#GRUB_THEME=.*|GRUB_THEME="/boot/grub/themes/bloom/theme.txt"|' "$GRUB_CONF"
-    else
-        echo 'GRUB_THEME="/boot/grub/themes/bloom/theme.txt"' >> "$GRUB_CONF"
-    fi
-    echo "  -> GRUB theme set"
 fi
-grub-mkconfig -o /boot/grub/grub.cfg 2>/dev/null || true
-echo "  -> GRUB configured"
+
+# Idempotent key=value setter — matches both active and #-commented lines,
+# replaces in place, or appends if missing.
+_grub_set() {
+    local key=$1 val=$2
+    if grep -qE "^[#[:space:]]*${key}=" "$GRUB_CONF" 2>/dev/null; then
+        sed -i -E "s|^[#[:space:]]*${key}=.*|${key}=${val}|" "$GRUB_CONF"
+    else
+        printf '%s=%s\n' "$key" "$val" >> "$GRUB_CONF"
+    fi
+}
+
+# Distro branding — GRUB_DISTRIBUTOR shows up in every menu entry label.
+_grub_set GRUB_DISTRIBUTOR  '"Bloom"'
+# Remember last choice across reboots.
+_grub_set GRUB_DEFAULT      'saved'
+_grub_set GRUB_SAVEDEFAULT  'true'
+# Sensible menu timing.
+_grub_set GRUB_TIMEOUT      '5'
+_grub_set GRUB_TIMEOUT_STYLE 'menu'
+# Let users dual-boot — os-prober is off upstream for security since 2.06.
+_grub_set GRUB_DISABLE_OS_PROBER 'false'
+# Adaptive gfxmode + keep the framebuffer into Linux so plymouth can draw
+# without a flash of black.
+_grub_set GRUB_GFXMODE          'auto'
+_grub_set GRUB_GFXPAYLOAD_LINUX 'keep'
+# Plymouth cmdline: quiet + splash + aggressive log suppression.
+_grub_set GRUB_CMDLINE_LINUX_DEFAULT \
+    '"quiet splash plymouth.use_simpledrm=1 loglevel=3 rd.udev.log_priority=3 vt.global_cursor_default=0"'
+# Theme path.
+if [ -d /boot/grub/themes/bloom ]; then
+    _grub_set GRUB_THEME '"/boot/grub/themes/bloom/theme.txt"'
+fi
+
+grub-mkconfig -o /boot/grub/grub.cfg
+echo "  -> GRUB configured (distributor=Bloom, theme, saved default, os-prober on)"
 
 # ── Firefox start page ────────────────────────────────────────────────────────
 if [ -d "$BLOOM/startpage" ]; then

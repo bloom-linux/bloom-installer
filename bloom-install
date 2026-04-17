@@ -305,13 +305,19 @@ def generate_config(data):
         "profile_config": {
             "profile":    {"classname": "Hyprland", "details": ["Hyprland"]},
             "gfx_driver": gpu["gfx_driver"],
-            "greeter":    "greetd",
+            # greeter omitted — archinstall's GreeterType enum doesn't include
+            # greetd (it's sddm/gdm/lightdm/ly only). We ship greetd via the
+            # packages list and post-install.sh enables it, so archinstall
+            # doesn't need to touch it.
         },
         "services": [
             "NetworkManager","bluetooth","ufw","apparmor",
             "greetd","cups","power-profiles-daemon",
         ],
-        "custom-commands": ["/run/bloom/post-install.sh"],
+        # archinstall renamed this field between 2.x and 3.x — ship both
+        # so whichever version runs picks one up.
+        "custom-commands":  ["/run/bloom/post-install.sh"],
+        "custom_commands":  ["/run/bloom/post-install.sh"],
         "swap":     True,
         "timezone": data.get("timezone","UTC"),
         "disk_config": {

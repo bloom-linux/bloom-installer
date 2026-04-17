@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Bloom
+Description=Bloom Boot Splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/bloom
+ScriptFile=/usr/share/plymouth/themes/bloom/bloom.script

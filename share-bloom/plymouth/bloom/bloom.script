@@ -1,0 +1,132 @@
+// Bloom Plymouth Boot Theme
+
+// Rich dark-purple gradient background — visibly purple, not just black
+Window.SetBackgroundTopColor(0.12, 0.05, 0.20);
+Window.SetBackgroundBottomColor(0.05, 0.02, 0.10);
+
+sw = Window.GetWidth();
+sh = Window.GetHeight();
+cx = sw / 2;
+cy = sh / 2;
+
+// --- Subtle vignette overlay (dark corners) ---
+vign_w = Math.Int(sw * 0.7);
+vign_h = Math.Int(sh * 0.7);
+vign_img = Image.SolidColor(vign_w, vign_h, 0.03, 0.01, 0.06, 0.0);
+vign = Sprite(vign_img);
+vign.SetX(Math.Int(cx - vign_w / 2));
+vign.SetY(Math.Int(cy - vign_h / 2));
+vign.SetZ(0);
+
+// --- Glow box behind icon (soft accent halo) ---
+box_w   = Math.Int(sh * 0.34);
+box_h   = Math.Int(sh * 0.34);
+box_img = Image.SolidColor(box_w, box_h, 0.44, 0.12, 0.56, 0.08);
+box     = Sprite(box_img);
+box.SetX(Math.Int(cx - box_w / 2));
+box.SetY(Math.Int(cy - box_h / 2 - sh * 0.06));
+box.SetZ(1);
+
+// --- Bloom icon (scaled to ~24% of screen height, centred slightly above middle) ---
+icon_img = Image("bloom.png");
+icon_w   = icon_img.GetWidth();
+icon_h   = icon_img.GetHeight();
+
+scale    = (sh * 0.24) / icon_h;
+icon_img = icon_img.Scale(Math.Int(icon_w * scale), Math.Int(icon_h * scale));
+icon_w   = icon_img.GetWidth();
+icon_h   = icon_img.GetHeight();
+
+icon = Sprite(icon_img);
+icon.SetX(Math.Int(cx - icon_w / 2));
+icon.SetY(Math.Int(cy - icon_h / 2 - sh * 0.06));
+icon.SetZ(2);
+
+// --- Progress bar track ---
+bar_w = Math.Int(sw * 0.28);
+bar_h = 3;
+bar_x = Math.Int(cx - bar_w / 2);
+bar_y = Math.Int(cy + icon_h / 2 + sh * 0.07);
+
+track_img = Image.SolidColor(bar_w, bar_h, 1.0, 1.0, 1.0, 0.12);
+track = Sprite(track_img);
+track.SetX(bar_x);
+track.SetY(bar_y);
+track.SetZ(2);
+
+// --- Progress bar fill (accent #B01828 ≈ 0.69, 0.09, 0.16) ---
+progress_img = Image.SolidColor(4, bar_h, 0.69, 0.09, 0.16, 1.0);
+progress = Sprite(progress_img);
+progress.SetX(bar_x);
+progress.SetY(bar_y);
+progress.SetZ(3);
+
+// --- Pulsing dots below progress bar ---
+dot_count    = 3;
+dot_size     = 5;
+dot_gap      = 12;
+dots_total_w = dot_count * dot_size + (dot_count - 1) * dot_gap;
+dots = [];
+
+for (i = 0; i < dot_count; i++) {
+    d_img = Image.SolidColor(dot_size, dot_size, 1.0, 1.0, 1.0, 0.18);
+    d = Sprite(d_img);
+    d.SetX(Math.Int(cx - dots_total_w / 2 + i * (dot_size + dot_gap)));
+    d.SetY(bar_y + bar_h + 12);
+    d.SetZ(3);
+    dots[i] = d;
+}
+
+frame = 0;
+
+fun refresh_callback() {
+    global frame;
+    global dots;
+    global dot_count;
+    global dot_size;
+    global dot_gap;
+    global box;
+    global box_img;
+    global box_w;
+    global box_h;
+
+    frame = frame + 1;
+
+    // Pulse the glow box opacity: slow sine-like oscillation
+    pulse = Math.Int(frame / 4) % 60;
+    if (pulse < 30) {
+        alpha = 0.06 + pulse * 0.002;
+    } else {
+        alpha = 0.12 - (pulse - 30) * 0.002;
+    }
+    box_img = Image.SolidColor(box_w, box_h, 0.44, 0.12, 0.56, alpha);
+    box.SetImage(box_img);
+
+    // Pulse the dots
+    active = Math.Int(frame / 14) % dot_count;
+    for (i = 0; i < dot_count; i++) {
+        if (i == active) {
+            d_img = Image.SolidColor(dot_size, dot_size, 0.69, 0.09, 0.16, 0.95);
+        } else {
+            d_img = Image.SolidColor(dot_size, dot_size, 1.0, 1.0, 1.0, 0.18);
+        }
+        dots[i].SetImage(d_img);
+    }
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);
+
+fun progress_callback(duration, progress_val) {
+    global bar_w;
+    global bar_h;
+    global bar_x;
+    global progress;
+    global progress_img;
+
+    w = Math.Int(bar_w * progress_val);
+    if (w < 4) { w = 4; }
+    progress_img = Image.SolidColor(w, bar_h, 0.69, 0.09, 0.16, 1.0);
+    progress.SetImage(progress_img);
+}
+
+Plymouth.SetBootProgressFunction(progress_callback);
