@@ -49,7 +49,7 @@
             "classname": "Hyprland",
             "details": ["Hyprland"]
         },
-        "gfx_driver": "All open-source (default)",
+        "gfx_driver": "All open-source",
         "greeter": "greetd"
     },
     "additional-repositories": ["multilib"],

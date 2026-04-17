@@ -68,20 +68,22 @@ INSTALL_PKGS = [
 ]
 
 GPU_DRIVER_MAP = {
+    # archinstall 3.x gfx_driver enum values — any other label gets rejected
+    # with "<...> is not a valid gfx driver". Keep these strings literal.
     "nvidia":  {
-        "gfx_driver": "Nvidia",
+        "gfx_driver": "Nvidia (proprietary)",
         "pkgs": ["nvidia-dkms","nvidia-utils","nvidia-settings","lib32-nvidia-utils","egl-wayland"],
     },
     "amd": {
-        "gfx_driver": "Amd / ATI (open-source)",
+        "gfx_driver": "AMD / ATI",
         "pkgs": ["mesa","vulkan-radeon","libva-mesa-driver","lib32-mesa","radeontop"],
     },
     "intel": {
-        "gfx_driver": "Intel (open-source)",
+        "gfx_driver": "Intel",
         "pkgs": ["mesa","vulkan-intel","intel-media-driver","lib32-mesa"],
     },
     "default": {
-        "gfx_driver": "All open-source (default)",
+        "gfx_driver": "All open-source",
         "pkgs": ["mesa"],
     },
 }
