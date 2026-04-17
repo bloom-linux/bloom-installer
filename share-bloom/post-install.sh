@@ -76,6 +76,38 @@ PLEOF
 mkinitcpio -P 2>/dev/null || true
 echo "  -> Plymouth theme set"
 
+# ── Bloom branding: /etc/os-release ───────────────────────────────────────────
+# This is what every other Linux's os-prober reads when it finds a partition
+# with a Linux root on it — the NAME field becomes the entry label in their
+# GRUB menu. So with this in place, a Ubuntu or Fedora user running
+# `sudo update-grub` / `sudo grub2-mkconfig` will see "Bloom" as a boot option
+# instead of "Arch Linux". lsb-release mirrors the same info for any legacy
+# tools that still read it.
+cat > /etc/os-release <<'OSREL'
+NAME="Bloom"
+PRETTY_NAME="Bloom Linux"
+ID=bloom
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="38;2;176;24;40"
+HOME_URL="https://bloom.linux"
+DOCUMENTATION_URL="https://bloom.linux/docs"
+LOGO=bloom
+OSREL
+
+# Some tools (grub-mkconfig, update-motd) also read /etc/lsb-release
+# for the distributor / release name. Shipping both avoids half-detection.
+cat > /etc/lsb-release <<'LSBREL'
+DISTRIB_ID=Bloom
+DISTRIB_RELEASE=rolling
+DISTRIB_DESCRIPTION="Bloom Linux"
+LSBREL
+
+# /usr/lib/os-release is owned by the `filesystem` package on Arch. Symlink
+# /etc/os-release → /usr/lib/os-release after replacing the latter so every
+# reader sees Bloom regardless of which path they query.
+cp /etc/os-release /usr/lib/os-release
+
 # ── GRUB: branding, defaults, theme, kernel cmdline ──────────────────────────
 GRUB_CONF="/etc/default/grub"
 
