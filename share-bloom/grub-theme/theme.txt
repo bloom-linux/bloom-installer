@@ -10,12 +10,12 @@ title-text: ""
     width = 38%
     height = 58%
 
-    item_color: "#88809A"
-    selected_item_color: "#F0EEF4"
-    item_height: 40
-    item_padding: 18
-    item_spacing: 6
-    scrollbar: false
+    item_color = "#88809A"
+    selected_item_color = "#F0EEF4"
+    item_height = 40
+    item_padding = 18
+    item_spacing = 6
+    scrollbar = false
 }
 
 + label {
